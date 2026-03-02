@@ -1,0 +1,1211 @@
+<!DOCTYPE html>
+<!-- X Composer — local tweet/thread drafting UI with image support and optional API send -->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Compose</title>
+  <style>
+    /* ── theme tokens ─────────────────────── */
+    :root {
+      --bg-page:   #f7f9f9;
+      --bg-card:   #ffffff;
+      --border:    #eff3f4;
+      --border-2:  #cfd9de;
+      --text:      #0f1419;
+      --text-2:    #536471;
+      --hover:     #f7f9f9;
+      --ring-bg:   #cfd9de;
+      --thumb-remove-bg: rgba(0,0,0,0.75);
+      --thumb-remove-color: #fff;
+    }
+
+    /* dark via system */
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg-page:   #000000;
+        --bg-card:   #000000;
+        --border:    #2f3336;
+        --border-2:  #2f3336;
+        --text:      #e7e9ea;
+        --text-2:    #536471;
+        --hover:     #080808;
+        --ring-bg:   #2f3336;
+        --thumb-remove-bg: rgba(0,0,0,0.75);
+        --thumb-remove-color: #e7e9ea;
+      }
+    }
+
+    /* dark forced by toggle */
+    :root[data-theme="dark"] {
+      --bg-page:   #000000;
+      --bg-card:   #000000;
+      --border:    #2f3336;
+      --border-2:  #2f3336;
+      --text:      #e7e9ea;
+      --text-2:    #536471;
+      --hover:     #080808;
+      --ring-bg:   #2f3336;
+      --thumb-remove-bg: rgba(0,0,0,0.75);
+      --thumb-remove-color: #e7e9ea;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg-page);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+
+    .wrap {
+      width: 100%;
+      max-width: 598px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    /* ── header ───────────────────────────── */
+    .hdr {
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .x-logo    { font-size: 20px; font-weight: 900; letter-spacing: -1px; line-height: 1; }
+    .hdr-title { font-size: 15px; font-weight: 700; }
+    .drafts-btn {
+      margin-left: auto;
+      background: none;
+      border: 1px solid var(--border-2);
+      color: var(--text);
+      padding: 6px 14px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+      font-family: inherit;
+      transition: border-color .15s;
+    }
+    .drafts-btn:hover { border-color: var(--text); }
+
+    /* ── thread container ─────────────────── */
+    #threadContainer { padding: 0; }
+
+    /* ── tweet card ───────────────────────── */
+    .tweet-card {
+      display: flex;
+      gap: 12px;
+      padding: 14px 16px 0;
+    }
+
+    /* left col: avatar + connecting line */
+    .card-left {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex-shrink: 0;
+      width: 40px;
+    }
+
+    .avatar {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: #1d9bf0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 16px;
+      color: white;
+      flex-shrink: 0;
+      user-select: none;
+    }
+
+    .thread-line {
+      width: 2px;
+      flex: 1;
+      min-height: 16px;
+      background: var(--ring-bg);
+      margin-top: 4px;
+      border-radius: 1px;
+    }
+
+    /* hide line on last card */
+    .tweet-card:last-child .thread-line { display: none; }
+
+    /* right col: content */
+    .card-right {
+      flex: 1;
+      min-width: 0;
+      padding-bottom: 12px;
+    }
+
+    /* audience pill (only on first card) */
+    .audience-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: #1d9bf0;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 3px 10px 3px 8px;
+      border: 1px solid #1d9bf033;
+      border-radius: 20px;
+      margin-bottom: 10px;
+      cursor: default;
+    }
+
+    .tweet-card:not(:first-child) .audience-pill { display: none; }
+
+    textarea {
+      width: 100%;
+      background: none;
+      border: none;
+      outline: none;
+      color: var(--text);
+      font-size: 20px;
+      font-family: inherit;
+      resize: none;
+      line-height: 1.5;
+      min-height: 60px;
+    }
+    textarea::placeholder { color: #536471; }
+
+    /* per-card image strip */
+    .image-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 8px;
+    }
+
+    .img-thumb {
+      position: relative;
+      width: 120px;
+      height: 90px;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+
+    .img-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    .img-thumb .img-remove {
+      position: absolute;
+      top: 4px;
+      right: 4px;
+      background: var(--thumb-remove-bg);
+      border: none;
+      color: var(--thumb-remove-color);
+      border-radius: 50%;
+      width: 22px;
+      height: 22px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      line-height: 1;
+    }
+    .img-thumb .img-remove:hover { background: rgba(244,33,46,0.85); }
+
+    /* per-card mini toolbar */
+    .card-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-top: 8px;
+    }
+
+    .img-attach-btn {
+      background: none;
+      border: none;
+      color: #1d9bf0;
+      cursor: pointer;
+      padding: 6px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background .15s;
+    }
+    .img-attach-btn:hover { background: rgba(29,155,240,0.1); }
+    .img-attach-btn svg { width: 18px; height: 18px; fill: #1d9bf0; }
+
+    /* char ring per card */
+    .char-ring {
+      margin-left: auto;
+      position: relative;
+      width: 24px;
+      height: 24px;
+    }
+    .char-ring svg { transform: rotate(-90deg); display: block; }
+    .ring-track { fill: none; stroke: var(--ring-bg); stroke-width: 2.5; }
+    .ring-fill  { fill: none; stroke: #1d9bf0; stroke-width: 2.5; stroke-linecap: round;
+                  transition: stroke-dashoffset .08s, stroke .08s; }
+
+    .ring-label {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      font-weight: 700;
+      color: #536471;
+      pointer-events: none;
+    }
+    .ring-label.warn { color: #ffd400; }
+    .ring-label.over { color: #f4212e; }
+
+    /* remove card button */
+    .remove-card-btn {
+      background: none;
+      border: none;
+      color: #536471;
+      cursor: pointer;
+      padding: 4px 6px;
+      border-radius: 4px;
+      font-size: 18px;
+      line-height: 1;
+      transition: color .15s;
+    }
+    .remove-card-btn:hover { color: #f4212e; }
+
+    /* ── add to thread ────────────────────── */
+    .add-thread-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px 14px;
+    }
+
+    .add-thread-avatar {
+      width: 40px;
+      display: flex;
+      justify-content: center;
+    }
+
+    .mini-avatar {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: #1d9bf0;
+      opacity: 0.6;
+    }
+
+    .add-thread-btn {
+      background: none;
+      border: none;
+      color: #1d9bf0;
+      cursor: pointer;
+      font-size: 15px;
+      font-weight: 500;
+      font-family: inherit;
+      padding: 4px 0;
+      opacity: 0.7;
+      transition: opacity .15s;
+    }
+    .add-thread-btn:hover { opacity: 1; }
+
+    /* ── send mode row ────────────────────── */
+    .mode-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      border-top: 1px solid var(--border);
+    }
+    .mode-row label {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      cursor: pointer;
+      color: #536471;
+      font-size: 13px;
+      font-weight: 500;
+    }
+    .mode-row label:hover { color: var(--text); }
+    input[type="checkbox"] { accent-color: #1d9bf0; cursor: pointer; width: 14px; height: 14px; }
+
+    .api-status       { font-size: 12px; color: var(--text-2); margin-left: 4px; }
+    .api-status.ok  { color: #00ba7c; }
+    .api-status.err { color: #f4212e; }
+
+    .draft-hint { font-size: 12px; color: var(--text-2); margin-left: auto; }
+
+    /* ── global toolbar ───────────────────── */
+    .toolbar {
+      border-top: 1px solid var(--border);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    .tool-btn {
+      background: none;
+      border: none;
+      color: #1d9bf0;
+      cursor: pointer;
+      padding: 8px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background .15s;
+    }
+    .tool-btn:hover { background: rgba(29,155,240,0.1); }
+    .tool-btn svg { width: 20px; height: 20px; fill: #1d9bf0; }
+
+    .toolbar-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .v-divider { width: 1px; height: 28px; background: var(--border-2); }
+
+    .post-btn {
+      background: #1d9bf0;
+      color: white;
+      border: none;
+      padding: 9px 20px;
+      border-radius: 20px;
+      font-weight: 800;
+      font-size: 15px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background .15s, opacity .15s;
+    }
+    .post-btn:hover:not(:disabled) { background: #1a8cd8; }
+    .post-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* ── drafts panel ─────────────────────── */
+    .drafts-panel {
+      display: none;
+      border-top: 1px solid var(--border);
+      padding: 16px;
+      max-height: 420px;
+      overflow-y: auto;
+    }
+    .drafts-panel.open { display: block; }
+
+    .drafts-heading { font-size: 17px; font-weight: 800; margin-bottom: 14px; }
+
+    .draft-item {
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: background .15s;
+      position: relative;
+    }
+    .draft-item:hover { background: var(--hover); }
+
+    .draft-thread-badge {
+      display: inline-block;
+      background: #1d9bf022;
+      color: #1d9bf0;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 10px;
+      margin-bottom: 6px;
+    }
+
+    .draft-body {
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+      padding-right: 28px;
+    }
+    .draft-meta { color: #536471; font-size: 12px; margin-top: 6px; }
+
+    .draft-del {
+      position: absolute;
+      top: 8px; right: 10px;
+      background: none;
+      border: none;
+      color: #536471;
+      cursor: pointer;
+      font-size: 18px;
+      line-height: 1;
+      padding: 2px 4px;
+      border-radius: 4px;
+    }
+    .draft-del:hover { color: #f4212e; background: rgba(244,33,46,.1); }
+
+    .empty-drafts { color: #536471; text-align: center; padding: 24px; font-size: 15px; }
+
+    /* ── toast ────────────────────────────── */
+    .toast {
+      position: fixed;
+      bottom: 28px;
+      left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      background: #1d9bf0;
+      color: white;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      transition: transform .25s cubic-bezier(0.34,1.56,0.64,1);
+      z-index: 999;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    .toast.show { transform: translateX(-50%) translateY(0); }
+    .toast.err  { background: #f4212e; }
+
+    /* ── onboarding panel ─────────────────── */
+    .setup-panel {
+      display: none;
+      border-top: 1px solid var(--border);
+      padding: 20px 16px 16px;
+      background: var(--bg-card);
+    }
+    .setup-panel.open { display: block; }
+
+    .setup-heading {
+      font-size: 17px;
+      font-weight: 800;
+      margin-bottom: 4px;
+    }
+    .setup-sub {
+      font-size: 13px;
+      color: var(--text-2);
+      margin-bottom: 16px;
+      line-height: 1.5;
+    }
+    .setup-sub a { color: #1d9bf0; text-decoration: none; }
+    .setup-sub a:hover { text-decoration: underline; }
+
+    .setup-fields { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+
+    .setup-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .setup-field label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-2);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .setup-field input {
+      background: var(--bg-page);
+      border: 1px solid var(--border-2);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: 'SF Mono', 'Fira Code', monospace;
+      font-size: 13px;
+      padding: 9px 12px;
+      outline: none;
+      transition: border-color .15s;
+      width: 100%;
+    }
+    .setup-field input:focus { border-color: #1d9bf0; }
+    .setup-field input::placeholder { color: var(--text-2); opacity: 0.5; }
+
+    .setup-actions { display: flex; align-items: center; gap: 10px; }
+
+    .setup-save-btn {
+      background: #1d9bf0;
+      color: white;
+      border: none;
+      padding: 9px 20px;
+      border-radius: 20px;
+      font-weight: 800;
+      font-size: 14px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background .15s, opacity .15s;
+    }
+    .setup-save-btn:hover:not(:disabled) { background: #1a8cd8; }
+    .setup-save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .setup-cancel-btn {
+      background: none;
+      border: none;
+      color: var(--text-2);
+      font-size: 14px;
+      cursor: pointer;
+      font-family: inherit;
+      padding: 9px 4px;
+    }
+    .setup-cancel-btn:hover { color: var(--text); }
+
+    .setup-status { font-size: 13px; color: var(--text-2); margin-left: auto; }
+    .setup-status.ok  { color: #00ba7c; }
+    .setup-status.err { color: #f4212e; }
+
+    /* ── theme toggle ─────────────────────── */
+    .theme-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 6px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-2);
+      transition: background .15s, color .15s;
+      font-size: 16px;
+      line-height: 1;
+    }
+    .theme-btn:hover { background: var(--hover); color: var(--text); }
+  </style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <!-- Header -->
+  <div class="hdr">
+    <div class="x-logo">𝕏</div>
+    <span class="hdr-title">New post</span>
+    <button class="theme-btn" id="themeBtn" onclick="cycleTheme()" title="Toggle theme"></button>
+    <button class="drafts-btn" onclick="toggleDrafts()">Drafts</button>
+  </div>
+
+  <!-- Thread cards injected by JS -->
+  <div id="threadContainer"></div>
+
+  <!-- Add to thread -->
+  <div class="add-thread-row">
+    <div class="add-thread-avatar"><div class="mini-avatar"></div></div>
+    <button class="add-thread-btn" onclick="addCard()">Add to thread</button>
+  </div>
+
+  <!-- API toggle -->
+  <div class="mode-row">
+    <label>
+      <input type="checkbox" id="sendMode" onchange="onModeChange()">
+      Post for real via X API
+    </label>
+    <span class="api-status" id="apiStatus"></span>
+    <span class="draft-hint" id="draftHint">→ saves to Drafts</span>
+  </div>
+
+  <!-- Onboarding / credential setup -->
+  <div class="setup-panel" id="setupPanel">
+    <div class="setup-heading">Connect your X account</div>
+    <p class="setup-sub">
+      You'll need an X Developer app with <strong>Read and Write</strong> permissions and
+      <strong>OAuth 1.0a</strong> enabled. Keys stay in a local <code>.env</code> file — never sent anywhere.
+      <a href="https://developer.x.com/en/portal/apps/new" target="_blank">Create an app →</a>
+    </p>
+    <div class="setup-fields">
+      <div class="setup-field">
+        <label>API Key (Consumer Key)</label>
+        <input id="setupApiKey" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+      </div>
+      <div class="setup-field">
+        <label>API Secret (Consumer Secret)</label>
+        <input id="setupApiSecret" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+      </div>
+      <div class="setup-field">
+        <label>Access Token</label>
+        <input id="setupAccessToken" type="password" placeholder="000000000-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+      </div>
+      <div class="setup-field">
+        <label>Access Token Secret</label>
+        <input id="setupAccessSecret" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+      </div>
+    </div>
+    <div class="setup-actions">
+      <button class="setup-save-btn" id="setupSaveBtn" onclick="saveSetup()">Save & connect</button>
+      <button class="setup-cancel-btn" onclick="closeSetup()">Cancel</button>
+      <span class="setup-status" id="setupStatus"></span>
+    </div>
+  </div>
+
+  <!-- Global toolbar -->
+  <div class="toolbar">
+    <!-- Decorative icons -->
+    <button class="tool-btn" title="Media — use card button to attach">
+      <svg viewBox="0 0 24 24"><path d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v9.086l3-3 3 3 5-5 3 3V5.5c0-.276-.224-.5-.5-.5h-13zM19 15.414l-3-3-5 5-3-3-3 3V18.5c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-3.086zM9.75 7C8.784 7 8 7.784 8 8.75s.784 1.75 1.75 1.75 1.75-.784 1.75-1.75S10.716 7 9.75 7z"/></svg>
+    </button>
+    <button class="tool-btn" title="GIF (decorative)">
+      <svg viewBox="0 0 24 24"><path d="M19 2H5C3.346 2 2 3.346 2 5v14c0 1.654 1.346 3 3 3h14c1.654 0 3-1.346 3-3V5c0-1.654-1.346-3-3-3zm1 17c0 .551-.448 1-1 1H5c-.552 0-1-.449-1-1V5c0-.551.448-1 1-1h14c.552 0 1 .449 1 1v14zM8 12H6V8h2v1H7v1h1v1H7v1h1v1zm2 0V8h3v1h-2v1h2v1h-2v1h2v1h-3zm6 0h-2V8h1v3h1v1z"/></svg>
+    </button>
+    <button class="tool-btn" title="Emoji (decorative)">
+      <svg viewBox="0 0 24 24"><path d="M12 22.75C6.072 22.75 1.25 17.928 1.25 12S6.072 1.25 12 1.25 22.75 6.072 22.75 12 17.928 22.75 12 22.75zm0-20C6.9 2.75 2.75 6.9 2.75 12S6.9 21.25 12 21.25s9.25-4.15 9.25-9.25S17.1 2.75 12 2.75zM9 11.25c-.69 0-1.25-.56-1.25-1.25S8.31 8.75 9 8.75s1.25.56 1.25 1.25S9.69 11.25 9 11.25zm6 0c-.69 0-1.25-.56-1.25-1.25s.56-1.25 1.25-1.25 1.25.56 1.25 1.25-.56 1.25-1.25 1.25zm-8.214 3.459c-.286-.403-.191-.963.212-1.249.404-.286.964-.191 1.25.212.518.73 1.565 1.578 3.752 1.578 2.188 0 3.234-.848 3.752-1.578.286-.403.846-.498 1.25-.212.403.286.498.846.212 1.249C15.556 16.098 14.134 17 12 17c-2.134 0-3.556-.902-4.214-1.791z"/></svg>
+    </button>
+
+    <div class="toolbar-right">
+      <div class="v-divider"></div>
+      <button class="post-btn" id="postBtn" onclick="handlePost()" disabled>Post all</button>
+    </div>
+  </div>
+
+  <!-- Drafts panel -->
+  <div class="drafts-panel" id="draftsPanel">
+    <div class="drafts-heading">Drafts</div>
+    <div id="draftsList"></div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  // ── constants ────────────────────────────────────────────
+  const MAX     = 280;
+  const CIRC_24 = 2 * Math.PI * 9; // r=9 in 24px svg → 56.55
+  const API_URL = 'http://localhost:3131';
+
+  let cardSeq = 0; // unique card IDs
+
+  // State: array of {id, images:[{data,mimeType,name}]}
+  // Text lives in the DOM textarea; images stored here
+  const cardImages = new Map();
+
+  // ── theme ────────────────────────────────────────────────
+  function applyTheme(t) {
+    if (t) document.documentElement.setAttribute('data-theme', t);
+    else   document.documentElement.removeAttribute('data-theme');
+    updateThemeBtn(t);
+  }
+
+  function updateThemeBtn(t) {
+    const effective = t || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.getElementById('themeBtn').textContent = effective === 'dark' ? '☀️' : '🌙';
+  }
+
+  function cycleTheme() {
+    const cur = localStorage.getItem('xc-theme');
+    const sys = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    // if following system → lock to opposite; if overriding → back to system
+    const next = cur ? null : (sys === 'dark' ? 'light' : 'dark');
+    if (next) localStorage.setItem('xc-theme', next);
+    else      localStorage.removeItem('xc-theme');
+    applyTheme(next);
+  }
+
+  applyTheme(localStorage.getItem('xc-theme'));
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (!localStorage.getItem('xc-theme')) updateThemeBtn(null);
+  });
+
+  // ── init ────────────────────────────────────────────────
+  addCard();
+  document.addEventListener('keydown', globalKeys);
+
+  function globalKeys(e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      if (!document.getElementById('postBtn').disabled) handlePost();
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      e.preventDefault();
+      saveDraft();
+    }
+  }
+
+  // ── card management ──────────────────────────────────────
+  function addCard(text = '') {
+    const id  = ++cardSeq;
+    cardImages.set(id, []);
+
+    const card = document.createElement('div');
+    card.className = 'tweet-card';
+    card.dataset.id = id;
+    card.innerHTML = `
+      <div class="card-left">
+        <div class="avatar">W</div>
+        <div class="thread-line"></div>
+      </div>
+      <div class="card-right">
+        <div class="audience-pill">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="#1d9bf0">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+          </svg>
+          Everyone
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="#1d9bf0"><path d="M7 10l5 5 5-5z"/></svg>
+        </div>
+        <textarea
+          placeholder="What is happening?!"
+          oninput="onInput(${id})"
+          onkeydown="onKeyDown(event)"
+          rows="3"
+        >${esc(text)}</textarea>
+        <div class="image-strip" id="strip-${id}"></div>
+        <div class="card-toolbar">
+          <button class="img-attach-btn" onclick="triggerFileInput(${id})" title="Attach images">
+            <svg viewBox="0 0 24 24">
+              <path d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v9.086l3-3 3 3 5-5 3 3V5.5c0-.276-.224-.5-.5-.5h-13zM19 15.414l-3-3-5 5-3-3-3 3V18.5c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-3.086zM9.75 7C8.784 7 8 7.784 8 8.75s.784 1.75 1.75 1.75 1.75-.784 1.75-1.75S10.716 7 9.75 7z"/>
+            </svg>
+          </button>
+          <input type="file" id="file-${id}" accept="image/*" multiple hidden
+            onchange="onFilesChosen(${id}, this)">
+          <div class="char-ring" id="ring-${id}">
+            <svg width="24" height="24" viewBox="0 0 24 24">
+              <circle class="ring-track" cx="12" cy="12" r="9"/>
+              <circle class="ring-fill" cx="12" cy="12" r="9"
+                id="ringFill-${id}"
+                stroke-dasharray="${CIRC_24.toFixed(2)}"
+                stroke-dashoffset="${CIRC_24.toFixed(2)}"/>
+            </svg>
+            <div class="ring-label" id="ringLabel-${id}"></div>
+          </div>
+          <button class="remove-card-btn" onclick="removeCard(${id})" title="Remove tweet">×</button>
+        </div>
+      </div>
+    `;
+
+    document.getElementById('threadContainer').appendChild(card);
+    updateRemoveButtons();
+
+    // auto-resize
+    const ta = card.querySelector('textarea');
+    ta.addEventListener('input', () => autoResize(ta));
+    autoResize(ta);
+
+    // focus
+    setTimeout(() => ta.focus(), 0);
+    onInput(id);
+    return id;
+  }
+
+  function removeCard(id) {
+    const cards = document.querySelectorAll('.tweet-card');
+    if (cards.length <= 1) return;
+    document.querySelector(`.tweet-card[data-id="${id}"]`)?.remove();
+    cardImages.delete(id);
+    updateRemoveButtons();
+    updatePostBtn();
+  }
+
+  function updateRemoveButtons() {
+    const cards = document.querySelectorAll('.tweet-card');
+    cards.forEach(c => {
+      c.querySelector('.remove-card-btn').style.display =
+        cards.length > 1 ? '' : 'none';
+    });
+  }
+
+  function autoResize(ta) {
+    ta.style.height = 'auto';
+    ta.style.height = ta.scrollHeight + 'px';
+  }
+
+  // ── char counter ─────────────────────────────────────────
+  function onInput(id) {
+    const ta = document.querySelector(`.tweet-card[data-id="${id}"] textarea`);
+    if (!ta) return;
+    const len  = ta.value.length;
+    const left = MAX - len;
+    const pct  = Math.min(len / MAX, 1.1);
+
+    const fill  = document.getElementById(`ringFill-${id}`);
+    const label = document.getElementById(`ringLabel-${id}`);
+
+    fill.style.strokeDashoffset = CIRC_24 - pct * CIRC_24;
+
+    if (len === 0) {
+      fill.style.stroke = '#2f3336';
+      label.textContent = '';
+      label.className = 'ring-label';
+    } else if (left > 20) {
+      fill.style.stroke = '#1d9bf0';
+      label.textContent = '';
+      label.className = 'ring-label';
+    } else if (left >= 0) {
+      fill.style.stroke = '#ffd400';
+      label.textContent = left;
+      label.className = 'ring-label warn';
+    } else {
+      fill.style.stroke = '#f4212e';
+      label.textContent = left;
+      label.className = 'ring-label over';
+    }
+
+    updatePostBtn();
+  }
+
+  function onKeyDown(e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      if (!document.getElementById('postBtn').disabled) handlePost();
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      e.preventDefault();
+      saveDraft();
+    }
+  }
+
+  function updatePostBtn() {
+    const cards   = document.querySelectorAll('.tweet-card');
+    const sendReal = document.getElementById('sendMode').checked;
+    let canPost   = false;
+    let anyOver   = false;
+
+    cards.forEach(c => {
+      const id   = +c.dataset.id;
+      const ta   = c.querySelector('textarea');
+      const len  = ta.value.length;
+      const imgs = cardImages.get(id) || [];
+      if (len > 0 || imgs.length > 0) canPost = true;
+      if (len > MAX) anyOver = true;
+    });
+
+    const btn = document.getElementById('postBtn');
+    btn.disabled    = !canPost || anyOver;
+    btn.textContent = sendReal
+      ? (cards.length > 1 ? 'Post all' : 'Post')
+      : (cards.length > 1 ? 'Save draft' : 'Save draft');
+  }
+
+  // ── image handling ───────────────────────────────────────
+  function triggerFileInput(id) {
+    const imgs = cardImages.get(id) || [];
+    if (imgs.length >= 4) { toast('Max 4 images per tweet', true); return; }
+    document.getElementById(`file-${id}`).click();
+  }
+
+  function onFilesChosen(id, input) {
+    const existing = cardImages.get(id) || [];
+    const slots    = 4 - existing.length;
+    const files    = Array.from(input.files).slice(0, slots);
+
+    const promises = files.map(file => new Promise(resolve => {
+      const reader = new FileReader();
+      reader.onload = e => resolve({
+        data:     e.target.result.split(',')[1], // base64
+        mimeType: file.type,
+        name:     file.name,
+        preview:  e.target.result,              // full data URL for preview
+      });
+      reader.readAsDataURL(file);
+    }));
+
+    Promise.all(promises).then(newImgs => {
+      cardImages.set(id, [...existing, ...newImgs]);
+      renderImageStrip(id);
+      updatePostBtn();
+    });
+
+    input.value = ''; // allow re-selecting same file
+  }
+
+  function removeImage(cardId, imgIdx) {
+    const imgs = cardImages.get(cardId) || [];
+    imgs.splice(imgIdx, 1);
+    cardImages.set(cardId, imgs);
+    renderImageStrip(cardId);
+    updatePostBtn();
+  }
+
+  function renderImageStrip(cardId) {
+    const strip = document.getElementById(`strip-${cardId}`);
+    if (!strip) return;
+    const imgs = cardImages.get(cardId) || [];
+
+    strip.innerHTML = imgs.map((img, i) => `
+      <div class="img-thumb">
+        <img src="${img.preview}" alt="${esc(img.name)}">
+        <button class="img-remove" onclick="removeImage(${cardId},${i})" title="Remove">×</button>
+      </div>
+    `).join('');
+  }
+
+  // ── collect thread data ───────────────────────────────────
+  function collectThread() {
+    const cards = document.querySelectorAll('.tweet-card');
+    return Array.from(cards).map(c => {
+      const id   = +c.dataset.id;
+      const text = c.querySelector('textarea').value.trim();
+      const imgs = (cardImages.get(id) || []).map(({ data, mimeType, name, preview }) =>
+        ({ data, mimeType, name, preview }));
+      return { text, images: imgs };
+    }).filter(t => t.text || t.images.length);
+  }
+
+  function clearAll() {
+    document.getElementById('threadContainer').innerHTML = '';
+    cardImages.clear();
+    cardSeq = 0;
+    addCard();
+  }
+
+  // ── post handler ─────────────────────────────────────────
+  async function handlePost() {
+    const thread   = collectThread();
+    const sendReal = document.getElementById('sendMode').checked;
+
+    if (!thread.length) return;
+
+    if (sendReal) {
+      await postToApi(thread);
+    } else {
+      saveDraft(true);
+      clearAll();
+      const label = thread.length > 1 ? `${thread.length}-tweet thread` : 'tweet';
+      toast(`${label} saved to drafts ✓`);
+    }
+  }
+
+  async function postToApi(thread) {
+    const btn = document.getElementById('postBtn');
+    btn.disabled = true;
+    const label = thread.length > 1 ? `Posting thread…` : 'Posting…';
+    btn.textContent = label;
+
+    try {
+      const payload = thread.map(t => ({
+        text:  t.text,
+        media: t.images.map(({ data, mimeType }) => ({ data, mimeType })),
+      }));
+
+      const res  = await fetch(`${API_URL}/post`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tweets: payload }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+      clearAll();
+      const suffix = thread.length > 1 ? ` (${thread.length} tweets)` : '';
+      toast(`Posted${suffix}! 𝕏 → ${data.url}`);
+    } catch (e) {
+      toast('Error: ' + e.message, true);
+    } finally {
+      btn.textContent = thread.length > 1 ? 'Post all' : 'Post';
+      updatePostBtn();
+    }
+  }
+
+  // ── drafts ───────────────────────────────────────────────
+  function getDrafts() {
+    try { return JSON.parse(localStorage.getItem('xcomposer-drafts') || '[]'); } catch { return []; }
+  }
+  function putDrafts(d) { localStorage.setItem('xcomposer-drafts', JSON.stringify(d)); }
+
+  function saveDraft(silent = false) {
+    const thread = collectThread();
+    if (!thread.length) { if (!silent) toast('Nothing to save', true); return; }
+
+    const drafts = getDrafts();
+    drafts.unshift({
+      id:     Date.now(),
+      thread, // [{text, images:[{data,mimeType,name,preview}]}]
+      date:   new Date().toLocaleString(),
+    });
+    putDrafts(drafts);
+    renderDrafts();
+    if (!silent) { clearAll(); toast('Draft saved'); }
+  }
+
+  function deleteDraft(id, e) {
+    e.stopPropagation();
+    putDrafts(getDrafts().filter(d => d.id !== id));
+    renderDrafts();
+  }
+
+  function loadDraft(draft) {
+    clearAll();
+    // remove the auto-added blank card first
+    document.getElementById('threadContainer').innerHTML = '';
+    cardImages.clear();
+    cardSeq = 0;
+
+    draft.thread.forEach(t => {
+      const id = addCard(t.text);
+      if (t.images?.length) {
+        cardImages.set(id, t.images);
+        renderImageStrip(id);
+      }
+    });
+
+    updatePostBtn();
+    toggleDrafts();
+  }
+
+  function renderDrafts() {
+    const drafts = getDrafts();
+    const el     = document.getElementById('draftsList');
+
+    if (!drafts.length) {
+      el.innerHTML = '<div class="empty-drafts">No drafts yet</div>';
+      return;
+    }
+
+    el.innerHTML = drafts.map(d => {
+      const isThread  = d.thread.length > 1;
+      const imgCount  = d.thread.reduce((n, t) => n + (t.images?.length || 0), 0);
+      const preview   = d.thread[0]?.text || '(image only)';
+      const metaParts = [d.date];
+      if (isThread)      metaParts.push(`${d.thread.length} tweets`);
+      if (imgCount > 0)  metaParts.push(`${imgCount} image${imgCount > 1 ? 's' : ''}`);
+
+      return `
+        <div class="draft-item" onclick='loadDraftById(${d.id})'>
+          <button class="draft-del" onclick="deleteDraft(${d.id},event)" title="Delete">×</button>
+          ${isThread ? '<div class="draft-thread-badge">Thread</div>' : ''}
+          <div class="draft-body">${esc(preview)}</div>
+          <div class="draft-meta">${metaParts.join(' · ')}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function loadDraftById(id) {
+    const draft = getDrafts().find(d => d.id === id);
+    if (draft) loadDraft(draft);
+  }
+
+  function toggleDrafts() {
+    const p = document.getElementById('draftsPanel');
+    p.classList.toggle('open');
+    if (p.classList.contains('open')) renderDrafts();
+  }
+
+  // ── mode toggle + api status ─────────────────────────────
+  async function onModeChange() {
+    const checked  = document.getElementById('sendMode').checked;
+    const statusEl = document.getElementById('apiStatus');
+    const hintEl   = document.getElementById('draftHint');
+
+    hintEl.style.display = checked ? 'none' : '';
+    updatePostBtn();
+
+    if (!checked) {
+      statusEl.textContent = '';
+      statusEl.className   = 'api-status';
+      closeSetup();
+      return;
+    }
+
+    statusEl.textContent = 'connecting…';
+    statusEl.className   = 'api-status';
+    try {
+      const res = await fetch(`${API_URL}/status`);
+      const d   = await res.json();
+
+      if (!d.configured) {
+        statusEl.textContent = 'needs setup';
+        statusEl.className   = 'api-status err';
+        openSetup();
+        return;
+      }
+
+      if (d.ok) {
+        statusEl.textContent = `✓ @${d.username}`;
+        statusEl.className   = 'api-status ok';
+        closeSetup();
+      } else {
+        statusEl.textContent = d.error || '✗ invalid credentials';
+        statusEl.className   = 'api-status err';
+        openSetup();
+      }
+    } catch {
+      statusEl.textContent = '✗ server not running — npm start';
+      statusEl.className   = 'api-status err';
+    }
+  }
+
+  // ── setup panel ───────────────────────────────────────────
+  function openSetup() {
+    document.getElementById('setupPanel').classList.add('open');
+  }
+
+  function closeSetup() {
+    document.getElementById('setupPanel').classList.remove('open');
+  }
+
+  async function saveSetup() {
+    const apiKey       = document.getElementById('setupApiKey').value.trim();
+    const apiSecret    = document.getElementById('setupApiSecret').value.trim();
+    const accessToken  = document.getElementById('setupAccessToken').value.trim();
+    const accessSecret = document.getElementById('setupAccessSecret').value.trim();
+
+    const statusEl = document.getElementById('setupStatus');
+    const saveBtn  = document.getElementById('setupSaveBtn');
+
+    if (!apiKey || !apiSecret || !accessToken || !accessSecret) {
+      statusEl.textContent = 'All four fields required';
+      statusEl.className   = 'setup-status err';
+      return;
+    }
+
+    saveBtn.disabled     = true;
+    saveBtn.textContent  = 'Verifying…';
+    statusEl.textContent = '';
+    statusEl.className   = 'setup-status';
+
+    try {
+      const res  = await fetch(`${API_URL}/setup`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ apiKey, apiSecret, accessToken, accessSecret }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+
+      // success — clear fields, close panel, update status bar
+      ['setupApiKey','setupApiSecret','setupAccessToken','setupAccessSecret']
+        .forEach(id => { document.getElementById(id).value = ''; });
+
+      document.getElementById('apiStatus').textContent = `✓ @${data.username}`;
+      document.getElementById('apiStatus').className   = 'api-status ok';
+      closeSetup();
+      toast(`Connected as @${data.username}`);
+    } catch (e) {
+      statusEl.textContent = e.message;
+      statusEl.className   = 'setup-status err';
+    } finally {
+      saveBtn.disabled    = false;
+      saveBtn.textContent = 'Save & connect';
+    }
+  }
+
+  // call once on load to set initial button label
+  onModeChange();
+
+  // ── helpers ──────────────────────────────────────────────
+  function esc(t) {
+    const d = document.createElement('div');
+    d.appendChild(document.createTextNode(t));
+    return d.innerHTML;
+  }
+
+  let _toastTimer;
+  function toast(msg, err = false) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.className = 'toast' + (err ? ' err' : '') + ' show';
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => el.classList.remove('show'), 3400);
+  }
+</script>
+
+</body>
+</html>
