@@ -2,7 +2,7 @@
 
 A local X/Twitter composer with threads, images, and drafts. Runs entirely on your machine — your API keys stay in a `.env` file and never leave.
 
-![amber-x composer](https://i.imgur.com/placeholder.png)
+![amber-x composer](screenshot.png)
 
 ## Features
 
