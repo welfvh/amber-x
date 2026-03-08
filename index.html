@@ -1,34 +1,42 @@
 <!DOCTYPE html>
-<!-- X Composer — local tweet/thread drafting UI with image support and optional API send -->
+<!-- x-vibepoastry — X content engine UI with compose, feed, schedule, and assets tabs -->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Compose</title>
+  <title>x-vibepoastry</title>
   <style>
     /* ── theme tokens ─────────────────────── */
     :root {
       --bg-page:   #f7f9f9;
       --bg-card:   #ffffff;
+      --bg-sidebar: #ffffff;
       --border:    #eff3f4;
       --border-2:  #cfd9de;
       --text:      #0f1419;
       --text-2:    #536471;
+      --text-3:    #8899a6;
       --hover:     #f7f9f9;
       --ring-bg:   #cfd9de;
+      --accent:    #1d9bf0;
+      --accent-hover: #1a8cd8;
+      --danger:    #f4212e;
+      --success:   #00ba7c;
+      --warning:   #ffd400;
       --thumb-remove-bg: rgba(0,0,0,0.75);
       --thumb-remove-color: #fff;
     }
 
-    /* dark via system */
     @media (prefers-color-scheme: dark) {
       :root:not([data-theme="light"]) {
         --bg-page:   #000000;
         --bg-card:   #000000;
+        --bg-sidebar: #000000;
         --border:    #2f3336;
         --border-2:  #2f3336;
         --text:      #e7e9ea;
-        --text-2:    #536471;
+        --text-2:    #71767b;
+        --text-3:    #536471;
         --hover:     #080808;
         --ring-bg:   #2f3336;
         --thumb-remove-bg: rgba(0,0,0,0.75);
@@ -36,14 +44,15 @@
       }
     }
 
-    /* dark forced by toggle */
     :root[data-theme="dark"] {
       --bg-page:   #000000;
       --bg-card:   #000000;
+      --bg-sidebar: #000000;
       --border:    #2f3336;
       --border-2:  #2f3336;
       --text:      #e7e9ea;
-      --text-2:    #536471;
+      --text-2:    #71767b;
+      --text-3:    #536471;
       --hover:     #080808;
       --ring-bg:   #2f3336;
       --thumb-remove-bg: rgba(0,0,0,0.75);
@@ -56,58 +65,134 @@
       background: var(--bg-page);
       color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, sans-serif;
-      min-height: 100vh;
+      height: 100vh;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ── sidebar ──────────────────────────── */
+    .sidebar {
+      width: 72px;
+      min-width: 72px;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 16px 0;
+      gap: 4px;
+      height: 100vh;
+    }
+
+    .sidebar-logo {
+      font-size: 22px;
+      font-weight: 900;
+      letter-spacing: -1px;
+      margin-bottom: 20px;
+      color: var(--text);
+    }
+
+    .sidebar-tab {
+      width: 52px;
+      height: 52px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      border: none;
+      background: none;
+      color: var(--text-2);
+      cursor: pointer;
+      border-radius: 12px;
+      transition: background .15s, color .15s;
+      font-size: 10px;
+      font-weight: 600;
+      font-family: inherit;
+    }
+
+    .sidebar-tab:hover { background: var(--hover); color: var(--text); }
+    .sidebar-tab.active { color: var(--accent); background: rgba(29,155,240,0.1); }
+    .sidebar-tab svg { width: 22px; height: 22px; fill: currentColor; }
+
+    .sidebar-bottom {
+      margin-top: auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+      padding-bottom: 8px;
+    }
+
+    .sidebar-handle {
+      font-size: 11px;
+      color: var(--text-2);
+      font-weight: 600;
+    }
+
+    .vps-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-3);
+      transition: background .3s;
+    }
+    .vps-dot.ok { background: var(--success); }
+    .vps-dot.err { background: var(--danger); }
+
+    .theme-toggle {
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--text-2);
+      font-size: 16px;
+      padding: 4px;
+      border-radius: 50%;
+    }
+    .theme-toggle:hover { background: var(--hover); }
+
+    /* ── main content area ────────────────── */
+    .main {
+      flex: 1;
       display: flex;
       align-items: flex-start;
       justify-content: center;
-      padding: 40px 20px;
+      overflow-y: auto;
+      padding: 20px;
     }
 
-    .wrap {
+    .tab-content {
+      display: none;
       width: 100%;
       max-width: 598px;
+    }
+    .tab-content.active { display: block; }
+
+    /* ── compose tab ──────────────────────── */
+    .compose-wrap {
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: 16px;
       overflow: hidden;
     }
 
-    /* ── header ───────────────────────────── */
-    .hdr {
+    .compose-header {
       padding: 14px 16px;
       display: flex;
       align-items: center;
       gap: 12px;
       border-bottom: 1px solid var(--border);
+      font-size: 15px;
+      font-weight: 700;
     }
-    .x-logo    { font-size: 20px; font-weight: 900; letter-spacing: -1px; line-height: 1; }
-    .hdr-title { font-size: 15px; font-weight: 700; }
-    .drafts-btn {
-      margin-left: auto;
-      background: none;
-      border: 1px solid var(--border-2);
-      color: var(--text);
-      padding: 6px 14px;
-      border-radius: 20px;
-      cursor: pointer;
-      font-size: 14px;
-      font-weight: 600;
-      font-family: inherit;
-      transition: border-color .15s;
-    }
-    .drafts-btn:hover { border-color: var(--text); }
 
-    /* ── thread container ─────────────────── */
-    #threadContainer { padding: 0; }
-
-    /* ── tweet card ───────────────────────── */
+    /* thread cards */
     .tweet-card {
       display: flex;
       gap: 12px;
       padding: 14px 16px 0;
     }
 
-    /* left col: avatar + connecting line */
     .card-left {
       display: flex;
       flex-direction: column;
@@ -120,7 +205,7 @@
       width: 40px;
       height: 40px;
       border-radius: 50%;
-      background: #1d9bf0;
+      background: var(--accent);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -140,31 +225,27 @@
       border-radius: 1px;
     }
 
-    /* hide line on last card */
     .tweet-card:last-child .thread-line { display: none; }
 
-    /* right col: content */
     .card-right {
       flex: 1;
       min-width: 0;
       padding-bottom: 12px;
     }
 
-    /* audience pill (only on first card) */
     .audience-pill {
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      color: #1d9bf0;
+      color: var(--accent);
       font-size: 13px;
       font-weight: 700;
       padding: 3px 10px 3px 8px;
-      border: 1px solid #1d9bf033;
+      border: 1px solid rgba(29,155,240,0.2);
       border-radius: 20px;
       margin-bottom: 10px;
       cursor: default;
     }
-
     .tweet-card:not(:first-child) .audience-pill { display: none; }
 
     textarea {
@@ -179,9 +260,8 @@
       line-height: 1.5;
       min-height: 60px;
     }
-    textarea::placeholder { color: #536471; }
+    textarea::placeholder { color: var(--text-3); }
 
-    /* per-card image strip */
     .image-strip {
       display: flex;
       flex-wrap: wrap;
@@ -225,7 +305,6 @@
     }
     .img-thumb .img-remove:hover { background: rgba(244,33,46,0.85); }
 
-    /* per-card mini toolbar */
     .card-toolbar {
       display: flex;
       align-items: center;
@@ -236,7 +315,7 @@
     .img-attach-btn {
       background: none;
       border: none;
-      color: #1d9bf0;
+      color: var(--accent);
       cursor: pointer;
       padding: 6px;
       border-radius: 50%;
@@ -246,9 +325,8 @@
       transition: background .15s;
     }
     .img-attach-btn:hover { background: rgba(29,155,240,0.1); }
-    .img-attach-btn svg { width: 18px; height: 18px; fill: #1d9bf0; }
+    .img-attach-btn svg { width: 18px; height: 18px; fill: currentColor; }
 
-    /* char ring per card */
     .char-ring {
       margin-left: auto;
       position: relative;
@@ -257,7 +335,7 @@
     }
     .char-ring svg { transform: rotate(-90deg); display: block; }
     .ring-track { fill: none; stroke: var(--ring-bg); stroke-width: 2.5; }
-    .ring-fill  { fill: none; stroke: #1d9bf0; stroke-width: 2.5; stroke-linecap: round;
+    .ring-fill  { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linecap: round;
                   transition: stroke-dashoffset .08s, stroke .08s; }
 
     .ring-label {
@@ -268,17 +346,16 @@
       justify-content: center;
       font-size: 9px;
       font-weight: 700;
-      color: #536471;
+      color: var(--text-2);
       pointer-events: none;
     }
-    .ring-label.warn { color: #ffd400; }
-    .ring-label.over { color: #f4212e; }
+    .ring-label.warn { color: var(--warning); }
+    .ring-label.over { color: var(--danger); }
 
-    /* remove card button */
     .remove-card-btn {
       background: none;
       border: none;
-      color: #536471;
+      color: var(--text-2);
       cursor: pointer;
       padding: 4px 6px;
       border-radius: 4px;
@@ -286,9 +363,8 @@
       line-height: 1;
       transition: color .15s;
     }
-    .remove-card-btn:hover { color: #f4212e; }
+    .remove-card-btn:hover { color: var(--danger); }
 
-    /* ── add to thread ────────────────────── */
     .add-thread-row {
       display: flex;
       align-items: center;
@@ -296,24 +372,20 @@
       padding: 10px 16px 14px;
     }
 
-    .add-thread-avatar {
-      width: 40px;
-      display: flex;
-      justify-content: center;
-    }
+    .add-thread-avatar { width: 40px; display: flex; justify-content: center; }
 
     .mini-avatar {
       width: 24px;
       height: 24px;
       border-radius: 50%;
-      background: #1d9bf0;
+      background: var(--accent);
       opacity: 0.6;
     }
 
     .add-thread-btn {
       background: none;
       border: none;
-      color: #1d9bf0;
+      color: var(--accent);
       cursor: pointer;
       font-size: 15px;
       font-weight: 500;
@@ -324,94 +396,70 @@
     }
     .add-thread-btn:hover { opacity: 1; }
 
-    /* ── send mode row ────────────────────── */
-    .mode-row {
+    /* compose bottom toolbar */
+    .compose-toolbar {
+      border-top: 1px solid var(--border);
+      padding: 10px 16px;
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 10px 16px;
-      border-top: 1px solid var(--border);
-    }
-    .mode-row label {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      cursor: pointer;
-      color: #536471;
-      font-size: 13px;
-      font-weight: 500;
-    }
-    .mode-row label:hover { color: var(--text); }
-    input[type="checkbox"] { accent-color: #1d9bf0; cursor: pointer; width: 14px; height: 14px; }
-
-    .api-status       { font-size: 12px; color: var(--text-2); margin-left: 4px; }
-    .api-status.ok  { color: #00ba7c; }
-    .api-status.err { color: #f4212e; }
-
-    .draft-hint { font-size: 12px; color: var(--text-2); margin-left: auto; }
-
-    /* ── global toolbar ───────────────────── */
-    .toolbar {
-      border-top: 1px solid var(--border);
-      padding: 10px 16px;
-      display: flex;
-      align-items: center;
-      gap: 2px;
     }
 
-    .tool-btn {
-      background: none;
-      border: none;
-      color: #1d9bf0;
-      cursor: pointer;
-      padding: 8px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: background .15s;
-    }
-    .tool-btn:hover { background: rgba(29,155,240,0.1); }
-    .tool-btn svg { width: 20px; height: 20px; fill: #1d9bf0; }
+    .compose-toolbar .spacer { flex: 1; }
 
-    .toolbar-right {
-      margin-left: auto;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .v-divider { width: 1px; height: 28px; background: var(--border-2); }
-
-    .post-btn {
-      background: #1d9bf0;
-      color: white;
+    .btn {
       border: none;
       padding: 9px 20px;
       border-radius: 20px;
       font-weight: 800;
-      font-size: 15px;
+      font-size: 14px;
       cursor: pointer;
       font-family: inherit;
       transition: background .15s, opacity .15s;
     }
-    .post-btn:hover:not(:disabled) { background: #1a8cd8; }
-    .post-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    /* ── drafts panel ─────────────────────── */
-    .drafts-panel {
-      display: none;
-      border-top: 1px solid var(--border);
-      padding: 16px;
-      max-height: 420px;
-      overflow-y: auto;
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+
+    .btn-outline {
+      background: none;
+      border: 1px solid var(--border-2);
+      color: var(--text);
     }
-    .drafts-panel.open { display: block; }
+    .btn-outline:hover:not(:disabled) { border-color: var(--text); }
 
-    .drafts-heading { font-size: 17px; font-weight: 800; margin-bottom: 14px; }
+    .btn-ghost {
+      background: none;
+      border: none;
+      color: var(--accent);
+      padding: 9px 12px;
+    }
+    .btn-ghost:hover { background: rgba(29,155,240,0.1); }
+
+    .btn-danger {
+      background: none;
+      border: none;
+      color: var(--danger);
+      padding: 6px 8px;
+      font-size: 13px;
+    }
+    .btn-danger:hover { background: rgba(244,33,46,0.1); }
+
+    /* ── draft list ───────────────────────── */
+    .draft-list {
+      margin-top: 16px;
+    }
+
+    .draft-list-header {
+      font-size: 17px;
+      font-weight: 800;
+      margin-bottom: 12px;
+    }
 
     .draft-item {
-      padding: 12px;
+      padding: 14px 16px;
+      background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: 12px;
       margin-bottom: 8px;
@@ -421,16 +469,17 @@
     }
     .draft-item:hover { background: var(--hover); }
 
-    .draft-thread-badge {
+    .draft-status {
       display: inline-block;
-      background: #1d9bf022;
-      color: #1d9bf0;
       font-size: 11px;
       font-weight: 700;
-      padding: 2px 7px;
+      padding: 2px 8px;
       border-radius: 10px;
       margin-bottom: 6px;
     }
+    .draft-status.draft { background: rgba(29,155,240,0.15); color: var(--accent); }
+    .draft-status.posted { background: rgba(0,186,124,0.15); color: var(--success); }
+    .draft-status.scheduled { background: rgba(255,212,0,0.15); color: #b58900; }
 
     .draft-body {
       color: var(--text);
@@ -438,25 +487,222 @@
       line-height: 1.45;
       white-space: pre-wrap;
       word-break: break-word;
-      padding-right: 28px;
     }
-    .draft-meta { color: #536471; font-size: 12px; margin-top: 6px; }
 
-    .draft-del {
-      position: absolute;
-      top: 8px; right: 10px;
-      background: none;
-      border: none;
-      color: #536471;
+    .draft-meta { color: var(--text-2); font-size: 12px; margin-top: 6px; }
+
+    .draft-actions {
+      display: flex;
+      gap: 4px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+
+    .draft-actions .btn { font-size: 12px; padding: 5px 12px; font-weight: 600; }
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-2);
+      font-size: 15px;
+    }
+
+    /* ── feed tab ─────────────────────────── */
+    .feed-header {
+      font-size: 17px;
+      font-weight: 800;
+      margin-bottom: 16px;
+    }
+
+    .stats-bar {
+      display: flex;
+      gap: 20px;
+      padding: 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .stat-value { font-size: 20px; font-weight: 800; }
+    .stat-label { font-size: 12px; color: var(--text-2); font-weight: 500; }
+
+    .tweet-item {
+      padding: 14px 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 8px;
+    }
+
+    .tweet-text {
+      font-size: 15px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin-bottom: 8px;
+    }
+
+    .tweet-metrics {
+      display: flex;
+      gap: 16px;
+      color: var(--text-2);
+      font-size: 13px;
+    }
+
+    .tweet-metrics span { display: flex; align-items: center; gap: 4px; }
+    .tweet-date { font-size: 12px; color: var(--text-3); margin-top: 6px; }
+
+    /* ── schedule tab ─────────────────────── */
+    .queue-item {
+      padding: 14px 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 8px;
+    }
+
+    .queue-status {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 10px;
+      margin-bottom: 6px;
+    }
+    .queue-status.pending { background: rgba(255,212,0,0.15); color: #b58900; }
+    .queue-status.posted { background: rgba(0,186,124,0.15); color: var(--success); }
+    .queue-status.failed { background: rgba(244,33,46,0.15); color: var(--danger); }
+    .queue-status.cancelled { background: rgba(83,100,113,0.15); color: var(--text-2); }
+
+    .queue-time { font-size: 13px; color: var(--text-2); margin-bottom: 4px; }
+    .queue-countdown { font-size: 12px; color: var(--accent); font-weight: 600; }
+
+    /* ── assets tab ───────────────────────── */
+    .asset-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .asset-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      position: relative;
       cursor: pointer;
-      font-size: 18px;
-      line-height: 1;
-      padding: 2px 4px;
-      border-radius: 4px;
+      transition: border-color .15s;
     }
-    .draft-del:hover { color: #f4212e; background: rgba(244,33,46,.1); }
+    .asset-card:hover { border-color: var(--accent); }
 
-    .empty-drafts { color: #536471; text-align: center; padding: 24px; font-size: 15px; }
+    .asset-card img {
+      width: 100%;
+      height: 150px;
+      object-fit: cover;
+      display: block;
+    }
+
+    .asset-card .asset-info {
+      padding: 8px 10px;
+      font-size: 12px;
+      color: var(--text-2);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .asset-card .asset-del {
+      position: absolute;
+      top: 6px;
+      right: 6px;
+      background: var(--thumb-remove-bg);
+      border: none;
+      color: var(--thumb-remove-color);
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+    .asset-card:hover .asset-del { display: flex; }
+    .asset-card .asset-del:hover { background: rgba(244,33,46,0.85); }
+
+    .text-asset {
+      padding: 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 8px;
+      position: relative;
+    }
+
+    .text-asset-title {
+      font-size: 13px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .text-asset-body {
+      font-size: 14px;
+      color: var(--text-2);
+      white-space: pre-wrap;
+      line-height: 1.4;
+    }
+
+    /* ── schedule modal ───────────────────── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+
+    .modal {
+      background: var(--bg-card);
+      border-radius: 16px;
+      padding: 24px;
+      width: 400px;
+      max-width: 90vw;
+    }
+
+    .modal h3 {
+      font-size: 17px;
+      font-weight: 800;
+      margin-bottom: 16px;
+    }
+
+    .modal input[type="datetime-local"] {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--border-2);
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: inherit;
+      background: var(--bg-page);
+      color: var(--text);
+      margin-bottom: 16px;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
 
     /* ── toast ────────────────────────────── */
     .toast {
@@ -464,7 +710,7 @@
       bottom: 28px;
       left: 50%;
       transform: translateX(-50%) translateY(80px);
-      background: #1d9bf0;
+      background: var(--accent);
       color: white;
       padding: 12px 24px;
       border-radius: 8px;
@@ -476,260 +722,183 @@
       white-space: nowrap;
     }
     .toast.show { transform: translateX(-50%) translateY(0); }
-    .toast.err  { background: #f4212e; }
-
-    /* ── onboarding panel ─────────────────── */
-    .setup-panel {
-      display: none;
-      border-top: 1px solid var(--border);
-      padding: 20px 16px 16px;
-      background: var(--bg-card);
-    }
-    .setup-panel.open { display: block; }
-
-    .setup-heading {
-      font-size: 17px;
-      font-weight: 800;
-      margin-bottom: 4px;
-    }
-    .setup-sub {
-      font-size: 13px;
-      color: var(--text-2);
-      margin-bottom: 16px;
-      line-height: 1.5;
-    }
-    .setup-sub a { color: #1d9bf0; text-decoration: none; }
-    .setup-sub a:hover { text-decoration: underline; }
-
-    .setup-fields { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
-
-    .setup-field {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-    .setup-field label {
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--text-2);
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }
-    .setup-field input {
-      background: var(--bg-page);
-      border: 1px solid var(--border-2);
-      border-radius: 8px;
-      color: var(--text);
-      font-family: 'SF Mono', 'Fira Code', monospace;
-      font-size: 13px;
-      padding: 9px 12px;
-      outline: none;
-      transition: border-color .15s;
-      width: 100%;
-    }
-    .setup-field input:focus { border-color: #1d9bf0; }
-    .setup-field input::placeholder { color: var(--text-2); opacity: 0.5; }
-
-    .setup-actions { display: flex; align-items: center; gap: 10px; }
-
-    .setup-save-btn {
-      background: #1d9bf0;
-      color: white;
-      border: none;
-      padding: 9px 20px;
-      border-radius: 20px;
-      font-weight: 800;
-      font-size: 14px;
-      cursor: pointer;
-      font-family: inherit;
-      transition: background .15s, opacity .15s;
-    }
-    .setup-save-btn:hover:not(:disabled) { background: #1a8cd8; }
-    .setup-save-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-    .setup-cancel-btn {
-      background: none;
-      border: none;
-      color: var(--text-2);
-      font-size: 14px;
-      cursor: pointer;
-      font-family: inherit;
-      padding: 9px 4px;
-    }
-    .setup-cancel-btn:hover { color: var(--text); }
-
-    .setup-status { font-size: 13px; color: var(--text-2); margin-left: auto; }
-    .setup-status.ok  { color: #00ba7c; }
-    .setup-status.err { color: #f4212e; }
-
-    /* ── theme toggle ─────────────────────── */
-    .theme-btn {
-      background: none;
-      border: none;
-      cursor: pointer;
-      padding: 6px;
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: var(--text-2);
-      transition: background .15s, color .15s;
-      font-size: 16px;
-      line-height: 1;
-    }
-    .theme-btn:hover { background: var(--hover); color: var(--text); }
+    .toast.err  { background: var(--danger); }
   </style>
 </head>
 <body>
 
-<div class="wrap">
+<!-- Sidebar -->
+<nav class="sidebar">
+  <div class="sidebar-logo">xvp</div>
 
-  <!-- Header -->
-  <div class="hdr">
-    <div class="x-logo">𝕏</div>
-    <span class="hdr-title">New post</span>
-    <button class="theme-btn" id="themeBtn" onclick="cycleTheme()" title="Toggle theme"></button>
-    <button class="drafts-btn" onclick="toggleDrafts()">Drafts</button>
+  <button class="sidebar-tab active" data-tab="compose" onclick="switchTab('compose')" title="Compose">
+    <svg viewBox="0 0 24 24"><path d="M23 3c-6.62-.1-10.38 2.421-13.05 6.03C7.29 12.61 6 17.331 6 22h2c0-1.007.07-2.012.19-3H12c4.1 0 7.48-3.082 7.94-7.054C22.79 8.496 23.684 5.333 23 3zM12 17H8.55c.57-2.512 1.57-4.851 3-6.78 2.16-2.912 5.29-4.911 9.45-5.187C20.94 8.36 19.9 11 17 13c-1.5 1-3 2-5 4z"/></svg>
+    <span>Compose</span>
+  </button>
+
+  <button class="sidebar-tab" data-tab="feed" onclick="switchTab('feed')" title="My Feed">
+    <svg viewBox="0 0 24 24"><path d="M5.651 19h12.698c-.337-1.8-1.023-3.21-1.945-4.19C15.318 13.65 13.838 13 12 13s-3.317.65-4.404 1.81c-.922.98-1.608 2.39-1.945 4.19zm.486-5.56C7.627 11.85 9.648 11 12 11s4.373.85 5.863 2.44c1.477 1.58 2.366 3.8 2.632 6.46l.11 1.1H3.395l.11-1.1c.266-2.66 1.155-4.88 2.632-6.46zM12 4c-1.105 0-2 .9-2 2s.895 2 2 2 2-.9 2-2-.895-2-2-2zM8 6c0-2.21 1.791-4 4-4s4 1.79 4 4-1.791 4-4 4-4-1.79-4-4z"/></svg>
+    <span>Feed</span>
+  </button>
+
+  <button class="sidebar-tab" data-tab="schedule" onclick="switchTab('schedule')" title="Schedule">
+    <svg viewBox="0 0 24 24"><path d="M12 2C6.486 2 2 6.486 2 12s4.486 10 10 10 10-4.486 10-10S17.514 2 12 2zm0 18c-4.411 0-8-3.589-8-8s3.589-8 8-8 8 3.589 8 8-3.589 8-8 8zm1-8.414V7h-2v5.414l3.293 3.293 1.414-1.414L13 11.586z"/></svg>
+    <span>Schedule</span>
+  </button>
+
+  <button class="sidebar-tab" data-tab="assets" onclick="switchTab('assets')" title="Assets">
+    <svg viewBox="0 0 24 24"><path d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v9.086l3-3 3 3 5-5 3 3V5.5c0-.276-.224-.5-.5-.5h-13zM19 15.414l-3-3-5 5-3-3-3 3V18.5c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-3.086zM9.75 7C8.784 7 8 7.784 8 8.75s.784 1.75 1.75 1.75 1.75-.784 1.75-1.75S10.716 7 9.75 7z"/></svg>
+    <span>Assets</span>
+  </button>
+
+  <div class="sidebar-bottom">
+    <div class="vps-dot" id="vpsDot" title="VPS status"></div>
+    <span class="sidebar-handle" id="sidebarHandle">@_welf</span>
+    <button class="theme-toggle" id="themeBtn" onclick="cycleTheme()" title="Toggle theme"></button>
   </div>
+</nav>
 
-  <!-- Thread cards injected by JS -->
-  <div id="threadContainer"></div>
+<!-- Main content -->
+<div class="main">
 
-  <!-- Add to thread -->
-  <div class="add-thread-row">
-    <div class="add-thread-avatar"><div class="mini-avatar"></div></div>
-    <button class="add-thread-btn" onclick="addCard()">Add to thread</button>
-  </div>
+  <!-- ── COMPOSE TAB ──────────────────────── -->
+  <div class="tab-content active" id="tab-compose">
+    <div class="compose-wrap">
+      <div class="compose-header">New post</div>
 
-  <!-- API toggle -->
-  <div class="mode-row">
-    <label>
-      <input type="checkbox" id="sendMode" onchange="onModeChange()">
-      Post for real via X API
-    </label>
-    <span class="api-status" id="apiStatus"></span>
-    <span class="draft-hint" id="draftHint">→ saves to Drafts</span>
-  </div>
+      <div id="threadContainer"></div>
 
-  <!-- Onboarding / credential setup -->
-  <div class="setup-panel" id="setupPanel">
-    <div class="setup-heading">Connect your X account</div>
-    <p class="setup-sub">
-      You'll need an X Developer app with <strong>Read and Write</strong> permissions and
-      <strong>OAuth 1.0a</strong> enabled. Keys stay in a local <code>.env</code> file — never sent anywhere.
-      <a href="https://developer.x.com/en/portal/apps/new" target="_blank">Create an app →</a>
-    </p>
-    <div class="setup-fields">
-      <div class="setup-field">
-        <label>API Key (Consumer Key)</label>
-        <input id="setupApiKey" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+      <div class="add-thread-row">
+        <div class="add-thread-avatar"><div class="mini-avatar"></div></div>
+        <button class="add-thread-btn" onclick="addCard()">Add to thread</button>
       </div>
-      <div class="setup-field">
-        <label>API Secret (Consumer Secret)</label>
-        <input id="setupApiSecret" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off">
-      </div>
-      <div class="setup-field">
-        <label>Access Token</label>
-        <input id="setupAccessToken" type="password" placeholder="000000000-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off">
-      </div>
-      <div class="setup-field">
-        <label>Access Token Secret</label>
-        <input id="setupAccessSecret" type="password" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" autocomplete="off">
+
+      <div class="compose-toolbar">
+        <button class="btn btn-ghost" onclick="saveDraftFromComposer()">Save draft</button>
+        <div class="spacer"></div>
+        <button class="btn btn-outline" id="scheduleBtn" onclick="openScheduleModal()" disabled>Schedule</button>
+        <button class="btn btn-outline" id="jamBtn" onclick="jamCurrentDraft()" disabled>Jam</button>
+        <button class="btn btn-primary" id="postBtn" onclick="handlePost()" disabled>Post</button>
       </div>
     </div>
-    <div class="setup-actions">
-      <button class="setup-save-btn" id="setupSaveBtn" onclick="saveSetup()">Save & connect</button>
-      <button class="setup-cancel-btn" onclick="closeSetup()">Cancel</button>
-      <span class="setup-status" id="setupStatus"></span>
-    </div>
-  </div>
 
-  <!-- Global toolbar -->
-  <div class="toolbar">
-    <!-- Decorative icons -->
-    <button class="tool-btn" title="Media — use card button to attach">
-      <svg viewBox="0 0 24 24"><path d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v9.086l3-3 3 3 5-5 3 3V5.5c0-.276-.224-.5-.5-.5h-13zM19 15.414l-3-3-5 5-3-3-3 3V18.5c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-3.086zM9.75 7C8.784 7 8 7.784 8 8.75s.784 1.75 1.75 1.75 1.75-.784 1.75-1.75S10.716 7 9.75 7z"/></svg>
-    </button>
-    <button class="tool-btn" title="GIF (decorative)">
-      <svg viewBox="0 0 24 24"><path d="M19 2H5C3.346 2 2 3.346 2 5v14c0 1.654 1.346 3 3 3h14c1.654 0 3-1.346 3-3V5c0-1.654-1.346-3-3-3zm1 17c0 .551-.448 1-1 1H5c-.552 0-1-.449-1-1V5c0-.551.448-1 1-1h14c.552 0 1 .449 1 1v14zM8 12H6V8h2v1H7v1h1v1H7v1h1v1zm2 0V8h3v1h-2v1h2v1h-2v1h2v1h-3zm6 0h-2V8h1v3h1v1z"/></svg>
-    </button>
-    <button class="tool-btn" title="Emoji (decorative)">
-      <svg viewBox="0 0 24 24"><path d="M12 22.75C6.072 22.75 1.25 17.928 1.25 12S6.072 1.25 12 1.25 22.75 6.072 22.75 12 17.928 22.75 12 22.75zm0-20C6.9 2.75 2.75 6.9 2.75 12S6.9 21.25 12 21.25s9.25-4.15 9.25-9.25S17.1 2.75 12 2.75zM9 11.25c-.69 0-1.25-.56-1.25-1.25S8.31 8.75 9 8.75s1.25.56 1.25 1.25S9.69 11.25 9 11.25zm6 0c-.69 0-1.25-.56-1.25-1.25s.56-1.25 1.25-1.25 1.25.56 1.25 1.25-.56 1.25-1.25 1.25zm-8.214 3.459c-.286-.403-.191-.963.212-1.249.404-.286.964-.191 1.25.212.518.73 1.565 1.578 3.752 1.578 2.188 0 3.234-.848 3.752-1.578.286-.403.846-.498 1.25-.212.403.286.498.846.212 1.249C15.556 16.098 14.134 17 12 17c-2.134 0-3.556-.902-4.214-1.791z"/></svg>
-    </button>
-
-    <div class="toolbar-right">
-      <div class="v-divider"></div>
-      <button class="post-btn" id="postBtn" onclick="handlePost()" disabled>Post all</button>
+    <!-- Draft list below composer -->
+    <div class="draft-list" id="draftList">
+      <div class="draft-list-header">Drafts</div>
+      <div id="draftListItems"></div>
     </div>
   </div>
 
-  <!-- Drafts panel -->
-  <div class="drafts-panel" id="draftsPanel">
-    <div class="drafts-heading">Drafts</div>
-    <div id="draftsList"></div>
+  <!-- ── FEED TAB ─────────────────────────── -->
+  <div class="tab-content" id="tab-feed">
+    <div class="feed-header">My Feed</div>
+    <div class="stats-bar" id="statsBar">
+      <div class="stat-item"><span class="stat-value" id="statFollowers">—</span><span class="stat-label">Followers</span></div>
+      <div class="stat-item"><span class="stat-value" id="statTweets">—</span><span class="stat-label">Tweets</span></div>
+      <div class="stat-item"><span class="stat-value" id="statLikes">—</span><span class="stat-label">Recent Likes</span></div>
+      <div class="stat-item"><span class="stat-value" id="statImpressions">—</span><span class="stat-label">Recent Impressions</span></div>
+    </div>
+    <div id="feedList"></div>
   </div>
 
+  <!-- ── SCHEDULE TAB ─────────────────────── -->
+  <div class="tab-content" id="tab-schedule">
+    <div class="feed-header">Scheduled Posts</div>
+    <div id="queueList"></div>
+  </div>
+
+  <!-- ── ASSETS TAB ───────────────────────── -->
+  <div class="tab-content" id="tab-assets">
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px;">
+      <span class="feed-header" style="margin:0">Assets</span>
+      <button class="btn btn-outline" onclick="triggerAssetUpload()" style="font-size:13px; padding:6px 14px;">Upload Image</button>
+      <button class="btn btn-outline" onclick="promptNewNote()" style="font-size:13px; padding:6px 14px;">Add Note</button>
+      <input type="file" id="assetFileInput" accept="image/*" multiple hidden onchange="handleAssetUpload(this)">
+    </div>
+    <div id="imageAssets" class="asset-grid"></div>
+    <div id="textAssets" style="margin-top:16px;"></div>
+  </div>
+
+</div>
+
+<!-- Schedule modal -->
+<div class="modal-overlay" id="scheduleModal">
+  <div class="modal">
+    <h3>Schedule Post</h3>
+    <input type="datetime-local" id="scheduleTime">
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeScheduleModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="confirmSchedule()">Schedule</button>
+    </div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
 
 <script>
-  // ── constants ────────────────────────────────────────────
-  const MAX     = 280;
-  const CIRC_24 = 2 * Math.PI * 9; // r=9 in 24px svg → 56.55
-  const API_URL = 'http://localhost:3131';
-
-  let cardSeq = 0; // unique card IDs
-
-  // State: array of {id, images:[{data,mimeType,name}]}
-  // Text lives in the DOM textarea; images stored here
+  const API = 'http://localhost:3131';
+  const MAX = 280;
+  const CIRC = 2 * Math.PI * 9;
+  let cardSeq = 0;
   const cardImages = new Map();
+  let currentEditDraftId = null;
 
-  // ── theme ────────────────────────────────────────────────
+  // ── theme ──────────────────────────────────────────────
+
   function applyTheme(t) {
     if (t) document.documentElement.setAttribute('data-theme', t);
     else   document.documentElement.removeAttribute('data-theme');
-    updateThemeBtn(t);
+    updateThemeIcon(t);
   }
 
-  function updateThemeBtn(t) {
-    const effective = t || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-    document.getElementById('themeBtn').textContent = effective === 'dark' ? '☀️' : '🌙';
+  function updateThemeIcon(t) {
+    const eff = t || (matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light');
+    document.getElementById('themeBtn').textContent = eff === 'dark' ? '\u2600\uFE0F' : '\uD83C\uDF19';
   }
 
   function cycleTheme() {
-    const cur = localStorage.getItem('xc-theme');
-    const sys = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-    // if following system → lock to opposite; if overriding → back to system
+    const cur = localStorage.getItem('xvp-theme');
+    const sys = matchMedia('(prefers-color-scheme:dark)').matches ? 'dark' : 'light';
     const next = cur ? null : (sys === 'dark' ? 'light' : 'dark');
-    if (next) localStorage.setItem('xc-theme', next);
-    else      localStorage.removeItem('xc-theme');
+    if (next) localStorage.setItem('xvp-theme', next);
+    else localStorage.removeItem('xvp-theme');
     applyTheme(next);
   }
 
-  applyTheme(localStorage.getItem('xc-theme'));
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-    if (!localStorage.getItem('xc-theme')) updateThemeBtn(null);
+  applyTheme(localStorage.getItem('xvp-theme'));
+  matchMedia('(prefers-color-scheme:dark)').addEventListener('change', () => {
+    if (!localStorage.getItem('xvp-theme')) updateThemeIcon(null);
   });
 
-  // ── init ────────────────────────────────────────────────
-  addCard();
-  document.addEventListener('keydown', globalKeys);
+  // ── tabs ───────────────────────────────────────────────
 
-  function globalKeys(e) {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-      e.preventDefault();
-      if (!document.getElementById('postBtn').disabled) handlePost();
-    }
-    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-      e.preventDefault();
-      saveDraft();
+  function switchTab(name) {
+    document.querySelectorAll('.sidebar-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.toggle('active', el.id === `tab-${name}`));
+    if (name === 'feed') loadFeed();
+    if (name === 'schedule') loadQueue();
+    if (name === 'assets') loadAssets();
+  }
+
+  // ── VPS status check ──────────────────────────────────
+
+  async function checkVPS() {
+    const dot = document.getElementById('vpsDot');
+    try {
+      const r = await fetch(`${API}/status`);
+      const d = await r.json();
+      dot.className = d.ok ? 'vps-dot ok' : 'vps-dot err';
+      dot.title = d.ok ? `Connected: @${d.username}` : (d.error || 'Error');
+    } catch {
+      dot.className = 'vps-dot err';
+      dot.title = 'VPS unreachable';
     }
   }
 
-  // ── card management ──────────────────────────────────────
+  // ── card management ────────────────────────────────────
+
   function addCard(text = '') {
-    const id  = ++cardSeq;
+    const id = ++cardSeq;
     cardImages.set(id, []);
 
     const card = document.createElement('div');
@@ -742,38 +911,24 @@
       </div>
       <div class="card-right">
         <div class="audience-pill">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="#1d9bf0">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
-          </svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
           Everyone
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="#1d9bf0"><path d="M7 10l5 5 5-5z"/></svg>
         </div>
-        <textarea
-          placeholder="What is happening?!"
-          oninput="onInput(${id})"
-          onkeydown="onKeyDown(event)"
-          rows="3"
-        >${esc(text)}</textarea>
+        <textarea placeholder="What is happening?!" oninput="onInput(${id})" rows="3">${esc(text)}</textarea>
         <div class="image-strip" id="strip-${id}"></div>
         <div class="card-toolbar">
           <button class="img-attach-btn" onclick="triggerFileInput(${id})" title="Attach images">
-            <svg viewBox="0 0 24 24">
-              <path d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v9.086l3-3 3 3 5-5 3 3V5.5c0-.276-.224-.5-.5-.5h-13zM19 15.414l-3-3-5 5-3-3-3 3V18.5c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-3.086zM9.75 7C8.784 7 8 7.784 8 8.75s.784 1.75 1.75 1.75 1.75-.784 1.75-1.75S10.716 7 9.75 7z"/>
-            </svg>
+            <svg viewBox="0 0 24 24"><path d="M3 5.5C3 4.119 4.119 3 5.5 3h13C19.881 3 21 4.119 21 5.5v13c0 1.381-1.119 2.5-2.5 2.5h-13C4.119 21 3 19.881 3 18.5v-13zM5.5 5c-.276 0-.5.224-.5.5v9.086l3-3 3 3 5-5 3 3V5.5c0-.276-.224-.5-.5-.5h-13zM19 15.414l-3-3-5 5-3-3-3 3V18.5c0 .276.224.5.5.5h13c.276 0 .5-.224.5-.5v-3.086zM9.75 7C8.784 7 8 7.784 8 8.75s.784 1.75 1.75 1.75 1.75-.784 1.75-1.75S10.716 7 9.75 7z"/></svg>
           </button>
-          <input type="file" id="file-${id}" accept="image/*" multiple hidden
-            onchange="onFilesChosen(${id}, this)">
+          <input type="file" id="file-${id}" accept="image/*" multiple hidden onchange="onFilesChosen(${id}, this)">
           <div class="char-ring" id="ring-${id}">
             <svg width="24" height="24" viewBox="0 0 24 24">
               <circle class="ring-track" cx="12" cy="12" r="9"/>
-              <circle class="ring-fill" cx="12" cy="12" r="9"
-                id="ringFill-${id}"
-                stroke-dasharray="${CIRC_24.toFixed(2)}"
-                stroke-dashoffset="${CIRC_24.toFixed(2)}"/>
+              <circle class="ring-fill" cx="12" cy="12" r="9" id="ringFill-${id}" stroke-dasharray="${CIRC.toFixed(2)}" stroke-dashoffset="${CIRC.toFixed(2)}"/>
             </svg>
             <div class="ring-label" id="ringLabel-${id}"></div>
           </div>
-          <button class="remove-card-btn" onclick="removeCard(${id})" title="Remove tweet">×</button>
+          <button class="remove-card-btn" onclick="removeCard(${id})" title="Remove tweet">\u00d7</button>
         </div>
       </div>
     `;
@@ -781,12 +936,9 @@
     document.getElementById('threadContainer').appendChild(card);
     updateRemoveButtons();
 
-    // auto-resize
     const ta = card.querySelector('textarea');
     ta.addEventListener('input', () => autoResize(ta));
     autoResize(ta);
-
-    // focus
     setTimeout(() => ta.focus(), 0);
     onInput(id);
     return id;
@@ -798,14 +950,13 @@
     document.querySelector(`.tweet-card[data-id="${id}"]`)?.remove();
     cardImages.delete(id);
     updateRemoveButtons();
-    updatePostBtn();
+    updateButtons();
   }
 
   function updateRemoveButtons() {
     const cards = document.querySelectorAll('.tweet-card');
     cards.forEach(c => {
-      c.querySelector('.remove-card-btn').style.display =
-        cards.length > 1 ? '' : 'none';
+      c.querySelector('.remove-card-btn').style.display = cards.length > 1 ? '' : 'none';
     });
   }
 
@@ -814,103 +965,80 @@
     ta.style.height = ta.scrollHeight + 'px';
   }
 
-  // ── char counter ─────────────────────────────────────────
+  // ── char counter ───────────────────────────────────────
+
   function onInput(id) {
     const ta = document.querySelector(`.tweet-card[data-id="${id}"] textarea`);
     if (!ta) return;
-    const len  = ta.value.length;
+    const len = ta.value.length;
     const left = MAX - len;
-    const pct  = Math.min(len / MAX, 1.1);
+    const pct = Math.min(len / MAX, 1.1);
 
-    const fill  = document.getElementById(`ringFill-${id}`);
+    const fill = document.getElementById(`ringFill-${id}`);
     const label = document.getElementById(`ringLabel-${id}`);
 
-    fill.style.strokeDashoffset = CIRC_24 - pct * CIRC_24;
+    fill.style.strokeDashoffset = CIRC - pct * CIRC;
 
     if (len === 0) {
-      fill.style.stroke = '#2f3336';
-      label.textContent = '';
-      label.className = 'ring-label';
+      fill.style.stroke = '#2f3336'; label.textContent = ''; label.className = 'ring-label';
     } else if (left > 20) {
-      fill.style.stroke = '#1d9bf0';
-      label.textContent = '';
-      label.className = 'ring-label';
+      fill.style.stroke = 'var(--accent)'; label.textContent = ''; label.className = 'ring-label';
     } else if (left >= 0) {
-      fill.style.stroke = '#ffd400';
-      label.textContent = left;
-      label.className = 'ring-label warn';
+      fill.style.stroke = 'var(--warning)'; label.textContent = left; label.className = 'ring-label warn';
     } else {
-      fill.style.stroke = '#f4212e';
-      label.textContent = left;
-      label.className = 'ring-label over';
+      fill.style.stroke = 'var(--danger)'; label.textContent = left; label.className = 'ring-label over';
     }
 
-    updatePostBtn();
+    updateButtons();
   }
 
-  function onKeyDown(e) {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-      e.preventDefault();
-      if (!document.getElementById('postBtn').disabled) handlePost();
-    }
-    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-      e.preventDefault();
-      saveDraft();
-    }
-  }
-
-  function updatePostBtn() {
-    const cards   = document.querySelectorAll('.tweet-card');
-    const sendReal = document.getElementById('sendMode').checked;
-    let canPost   = false;
-    let anyOver   = false;
+  function updateButtons() {
+    const cards = document.querySelectorAll('.tweet-card');
+    let canPost = false, anyOver = false;
 
     cards.forEach(c => {
-      const id   = +c.dataset.id;
-      const ta   = c.querySelector('textarea');
-      const len  = ta.value.length;
+      const id = +c.dataset.id;
+      const ta = c.querySelector('textarea');
+      const len = ta.value.length;
       const imgs = cardImages.get(id) || [];
       if (len > 0 || imgs.length > 0) canPost = true;
       if (len > MAX) anyOver = true;
     });
 
-    const btn = document.getElementById('postBtn');
-    btn.disabled    = !canPost || anyOver;
-    btn.textContent = sendReal
-      ? (cards.length > 1 ? 'Post all' : 'Post')
-      : (cards.length > 1 ? 'Save draft' : 'Save draft');
+    const ok = canPost && !anyOver;
+    document.getElementById('postBtn').disabled = !ok;
+    document.getElementById('scheduleBtn').disabled = !ok;
+    document.getElementById('jamBtn').disabled = !ok;
   }
 
-  // ── image handling ───────────────────────────────────────
+  // ── image handling ─────────────────────────────────────
+
   function triggerFileInput(id) {
-    const imgs = cardImages.get(id) || [];
-    if (imgs.length >= 4) { toast('Max 4 images per tweet', true); return; }
+    if ((cardImages.get(id) || []).length >= 4) { toast('Max 4 images per tweet', true); return; }
     document.getElementById(`file-${id}`).click();
   }
 
   function onFilesChosen(id, input) {
     const existing = cardImages.get(id) || [];
-    const slots    = 4 - existing.length;
-    const files    = Array.from(input.files).slice(0, slots);
+    const slots = 4 - existing.length;
+    const files = Array.from(input.files).slice(0, slots);
 
-    const promises = files.map(file => new Promise(resolve => {
+    Promise.all(files.map(file => new Promise(resolve => {
       const reader = new FileReader();
       reader.onload = e => resolve({
-        data:     e.target.result.split(',')[1], // base64
+        data: e.target.result.split(',')[1],
         mimeType: file.type,
-        name:     file.name,
-        preview:  e.target.result,              // full data URL for preview
+        name: file.name,
+        preview: e.target.result,
       });
       reader.readAsDataURL(file);
-    }));
-
-    Promise.all(promises).then(newImgs => {
+    }))).then(newImgs => {
       cardImages.set(id, [...existing, ...newImgs]);
       renderImageStrip(id);
-      updatePostBtn();
+      updateButtons();
     });
 
-    input.value = ''; // allow re-selecting same file
+    input.value = '';
   }
 
   function removeImage(cardId, imgIdx) {
@@ -918,283 +1046,488 @@
     imgs.splice(imgIdx, 1);
     cardImages.set(cardId, imgs);
     renderImageStrip(cardId);
-    updatePostBtn();
+    updateButtons();
   }
 
   function renderImageStrip(cardId) {
     const strip = document.getElementById(`strip-${cardId}`);
     if (!strip) return;
     const imgs = cardImages.get(cardId) || [];
-
     strip.innerHTML = imgs.map((img, i) => `
       <div class="img-thumb">
         <img src="${img.preview}" alt="${esc(img.name)}">
-        <button class="img-remove" onclick="removeImage(${cardId},${i})" title="Remove">×</button>
+        <button class="img-remove" onclick="removeImage(${cardId},${i})" title="Remove">\u00d7</button>
       </div>
     `).join('');
   }
 
-  // ── collect thread data ───────────────────────────────────
+  // ── collect thread data ────────────────────────────────
+
   function collectThread() {
-    const cards = document.querySelectorAll('.tweet-card');
-    return Array.from(cards).map(c => {
-      const id   = +c.dataset.id;
+    return Array.from(document.querySelectorAll('.tweet-card')).map(c => {
+      const id = +c.dataset.id;
       const text = c.querySelector('textarea').value.trim();
-      const imgs = (cardImages.get(id) || []).map(({ data, mimeType, name, preview }) =>
-        ({ data, mimeType, name, preview }));
-      return { text, images: imgs };
-    }).filter(t => t.text || t.images.length);
+      const imgs = (cardImages.get(id) || []).map(({data, mimeType, name, preview}) => ({data, mimeType, name, preview}));
+      return { text, media: imgs };
+    }).filter(t => t.text || t.media.length);
   }
 
-  function clearAll() {
+  function clearComposer() {
     document.getElementById('threadContainer').innerHTML = '';
     cardImages.clear();
     cardSeq = 0;
+    currentEditDraftId = null;
     addCard();
   }
 
-  // ── post handler ─────────────────────────────────────────
-  async function handlePost() {
-    const thread   = collectThread();
-    const sendReal = document.getElementById('sendMode').checked;
+  // ── post handler ───────────────────────────────────────
 
+  async function handlePost() {
+    const thread = collectThread();
     if (!thread.length) return;
 
-    if (sendReal) {
-      await postToApi(thread);
-    } else {
-      saveDraft(true);
-      clearAll();
-      const label = thread.length > 1 ? `${thread.length}-tweet thread` : 'tweet';
-      toast(`${label} saved to drafts ✓`);
-    }
-  }
-
-  async function postToApi(thread) {
     const btn = document.getElementById('postBtn');
     btn.disabled = true;
-    const label = thread.length > 1 ? `Posting thread…` : 'Posting…';
-    btn.textContent = label;
+    btn.textContent = 'Posting\u2026';
 
     try {
-      const payload = thread.map(t => ({
-        text:  t.text,
-        media: t.images.map(({ data, mimeType }) => ({ data, mimeType })),
-      }));
+      const payload = {
+        tweets: thread.map(t => ({
+          text: t.text,
+          media: t.media.filter(m => m.data),
+        })),
+      };
+      if (currentEditDraftId) payload.draft_id = currentEditDraftId;
 
-      const res  = await fetch(`${API_URL}/post`, {
+      const res = await fetch(`${API}/post`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tweets: payload }),
+        body: JSON.stringify(payload),
       });
-
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
 
-      clearAll();
-      const suffix = thread.length > 1 ? ` (${thread.length} tweets)` : '';
-      toast(`Posted${suffix}! 𝕏 → ${data.url}`);
+      clearComposer();
+      loadDrafts();
+      toast(`Posted! \u2192 ${data.url}`);
     } catch (e) {
       toast('Error: ' + e.message, true);
     } finally {
-      btn.textContent = thread.length > 1 ? 'Post all' : 'Post';
-      updatePostBtn();
+      btn.textContent = 'Post';
+      updateButtons();
     }
   }
 
-  // ── drafts ───────────────────────────────────────────────
-  function getDrafts() {
-    try { return JSON.parse(localStorage.getItem('xcomposer-drafts') || '[]'); } catch { return []; }
-  }
-  function putDrafts(d) { localStorage.setItem('xcomposer-drafts', JSON.stringify(d)); }
+  // ── draft management ───────────────────────────────────
 
-  function saveDraft(silent = false) {
+  async function saveDraftFromComposer() {
     const thread = collectThread();
-    if (!thread.length) { if (!silent) toast('Nothing to save', true); return; }
+    if (!thread.length) { toast('Nothing to save', true); return; }
 
-    const drafts = getDrafts();
-    drafts.unshift({
-      id:     Date.now(),
-      thread, // [{text, images:[{data,mimeType,name,preview}]}]
-      date:   new Date().toLocaleString(),
-    });
-    putDrafts(drafts);
-    renderDrafts();
-    if (!silent) { clearAll(); toast('Draft saved'); }
-  }
-
-  function deleteDraft(id, e) {
-    e.stopPropagation();
-    putDrafts(getDrafts().filter(d => d.id !== id));
-    renderDrafts();
-  }
-
-  function loadDraft(draft) {
-    clearAll();
-    // remove the auto-added blank card first
-    document.getElementById('threadContainer').innerHTML = '';
-    cardImages.clear();
-    cardSeq = 0;
-
-    draft.thread.forEach(t => {
-      const id = addCard(t.text);
-      if (t.images?.length) {
-        cardImages.set(id, t.images);
-        renderImageStrip(id);
+    try {
+      if (currentEditDraftId) {
+        await fetch(`${API}/drafts/${currentEditDraftId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ thread: thread.map(t => ({ text: t.text })) }),
+        });
+        toast('Draft updated');
+      } else {
+        const res = await fetch(`${API}/drafts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ thread: thread.map(t => ({ text: t.text })) }),
+        });
+        const data = await res.json();
+        currentEditDraftId = data.id;
+        toast('Draft saved');
       }
-    });
-
-    updatePostBtn();
-    toggleDrafts();
+      loadDrafts();
+    } catch (e) {
+      toast('Error: ' + e.message, true);
+    }
   }
 
-  function renderDrafts() {
-    const drafts = getDrafts();
-    const el     = document.getElementById('draftsList');
+  async function loadDrafts() {
+    try {
+      const res = await fetch(`${API}/drafts`);
+      const data = await res.json();
+      renderDraftList(data.drafts || []);
+    } catch {
+      document.getElementById('draftListItems').innerHTML = '<div class="empty-state">Could not load drafts</div>';
+    }
+  }
 
+  function renderDraftList(drafts) {
+    const el = document.getElementById('draftListItems');
     if (!drafts.length) {
-      el.innerHTML = '<div class="empty-drafts">No drafts yet</div>';
+      el.innerHTML = '<div class="empty-state">No drafts yet</div>';
       return;
     }
 
     el.innerHTML = drafts.map(d => {
-      const isThread  = d.thread.length > 1;
-      const imgCount  = d.thread.reduce((n, t) => n + (t.images?.length || 0), 0);
-      const preview   = d.thread[0]?.text || '(image only)';
-      const metaParts = [d.date];
-      if (isThread)      metaParts.push(`${d.thread.length} tweets`);
-      if (imgCount > 0)  metaParts.push(`${imgCount} image${imgCount > 1 ? 's' : ''}`);
+      const thread = d.thread || [];
+      const preview = thread[0]?.text || '(empty)';
+      const isThread = thread.length > 1;
+      const statusClass = d.status || 'draft';
 
       return `
-        <div class="draft-item" onclick='loadDraftById(${d.id})'>
-          <button class="draft-del" onclick="deleteDraft(${d.id},event)" title="Delete">×</button>
-          ${isThread ? '<div class="draft-thread-badge">Thread</div>' : ''}
-          <div class="draft-body">${esc(preview)}</div>
-          <div class="draft-meta">${metaParts.join(' · ')}</div>
+        <div class="draft-item">
+          <span class="draft-status ${statusClass}">${statusClass}${isThread ? ` \u00b7 ${thread.length} tweets` : ''}</span>
+          <div class="draft-body">${esc(preview.slice(0, 200))}${preview.length > 200 ? '\u2026' : ''}</div>
+          <div class="draft-meta">${d.created_at || ''}</div>
+          <div class="draft-actions">
+            <button class="btn btn-outline" onclick="editDraft('${d.id}')">Edit</button>
+            <button class="btn btn-ghost" onclick="jamDraft('${d.id}')">Jam</button>
+            <button class="btn btn-outline" onclick="scheduleDraft('${d.id}')">Schedule</button>
+            <button class="btn btn-primary" onclick="postDraft('${d.id}')" style="font-size:12px;padding:5px 12px;">Post</button>
+            <button class="btn btn-danger" onclick="deleteDraft('${d.id}')">Delete</button>
+          </div>
         </div>
       `;
     }).join('');
   }
 
-  function loadDraftById(id) {
-    const draft = getDrafts().find(d => d.id === id);
-    if (draft) loadDraft(draft);
+  async function editDraft(id) {
+    try {
+      const res = await fetch(`${API}/drafts/${id}`);
+      const draft = await res.json();
+      const thread = draft.thread || [];
+
+      document.getElementById('threadContainer').innerHTML = '';
+      cardImages.clear();
+      cardSeq = 0;
+      currentEditDraftId = id;
+
+      thread.forEach(t => addCard(t.text || ''));
+      updateButtons();
+    } catch (e) {
+      toast('Error loading draft: ' + e.message, true);
+    }
   }
 
-  function toggleDrafts() {
-    const p = document.getElementById('draftsPanel');
-    p.classList.toggle('open');
-    if (p.classList.contains('open')) renderDrafts();
+  async function deleteDraft(id) {
+    try {
+      await fetch(`${API}/drafts/${id}`, { method: 'DELETE' });
+      if (currentEditDraftId === id) clearComposer();
+      loadDrafts();
+      toast('Draft deleted');
+    } catch (e) {
+      toast('Error: ' + e.message, true);
+    }
   }
 
-  // ── mode toggle + api status ─────────────────────────────
-  async function onModeChange() {
-    const checked  = document.getElementById('sendMode').checked;
-    const statusEl = document.getElementById('apiStatus');
-    const hintEl   = document.getElementById('draftHint');
+  async function postDraft(id) {
+    try {
+      const res = await fetch(`${API}/post`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ draft_id: id }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      loadDrafts();
+      if (currentEditDraftId === id) clearComposer();
+      toast(`Posted! \u2192 ${data.url}`);
+    } catch (e) {
+      toast('Error: ' + e.message, true);
+    }
+  }
 
-    hintEl.style.display = checked ? 'none' : '';
-    updatePostBtn();
+  async function jamDraft(id) {
+    try {
+      const res = await fetch(`${API}/drafts/${id}/jam`, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      toast('Jam ready \u2014 run /cc-x-jam in CC');
+    } catch (e) {
+      toast('Error: ' + e.message, true);
+    }
+  }
 
-    if (!checked) {
-      statusEl.textContent = '';
-      statusEl.className   = 'api-status';
-      closeSetup();
-      return;
+  async function jamCurrentDraft() {
+    const thread = collectThread();
+    if (!thread.length) return;
+
+    // Save as draft first if needed
+    if (!currentEditDraftId) {
+      const res = await fetch(`${API}/drafts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ thread: thread.map(t => ({ text: t.text })) }),
+      });
+      const data = await res.json();
+      currentEditDraftId = data.id;
     }
 
-    statusEl.textContent = 'connecting…';
-    statusEl.className   = 'api-status';
-    try {
-      const res = await fetch(`${API_URL}/status`);
-      const d   = await res.json();
+    jamDraft(currentEditDraftId);
+  }
 
-      if (!d.configured) {
-        statusEl.textContent = 'needs setup';
-        statusEl.className   = 'api-status err';
-        openSetup();
+  // ── schedule ───────────────────────────────────────────
+
+  let scheduleDraftId = null;
+
+  function openScheduleModal(draftId) {
+    scheduleDraftId = draftId || null;
+    // Default to 1 hour from now
+    const d = new Date(Date.now() + 3600000);
+    document.getElementById('scheduleTime').value = d.toISOString().slice(0, 16);
+    document.getElementById('scheduleModal').classList.add('open');
+  }
+
+  function closeScheduleModal() {
+    document.getElementById('scheduleModal').classList.remove('open');
+    scheduleDraftId = null;
+  }
+
+  function scheduleDraft(id) {
+    scheduleDraftId = id;
+    openScheduleModal(id);
+  }
+
+  async function confirmSchedule() {
+    const timeInput = document.getElementById('scheduleTime').value;
+    if (!timeInput) { toast('Pick a time', true); return; }
+
+    const scheduledAt = new Date(timeInput).toISOString();
+    let tweets;
+
+    if (scheduleDraftId) {
+      const res = await fetch(`${API}/drafts/${scheduleDraftId}`);
+      const draft = await res.json();
+      tweets = (draft.thread || []).map(t => ({ text: t.text }));
+    } else {
+      tweets = collectThread().map(t => ({ text: t.text }));
+    }
+
+    try {
+      const res = await fetch(`${API}/schedule`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tweets,
+          scheduled_at: scheduledAt,
+          draft_id: scheduleDraftId || currentEditDraftId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || data.detail);
+
+      closeScheduleModal();
+      loadDrafts();
+      toast('Scheduled!');
+    } catch (e) {
+      toast('Error: ' + e.message, true);
+    }
+  }
+
+  // ── feed tab ───────────────────────────────────────────
+
+  async function loadFeed() {
+    // Load stats
+    try {
+      const res = await fetch(`${API}/stats`);
+      const data = await res.json();
+      document.getElementById('statFollowers').textContent = fmtNum(data.followers);
+      document.getElementById('statTweets').textContent = fmtNum(data.tweet_count);
+      document.getElementById('statLikes').textContent = fmtNum(data.recent_metrics?.total_likes || 0);
+      document.getElementById('statImpressions').textContent = fmtNum(data.recent_metrics?.total_impressions || 0);
+    } catch {}
+
+    // Load tweets
+    try {
+      const res = await fetch(`${API}/tweets?count=20`);
+      const data = await res.json();
+      const el = document.getElementById('feedList');
+
+      if (!data.tweets?.length) {
+        el.innerHTML = '<div class="empty-state">No tweets found</div>';
         return;
       }
 
-      if (d.ok) {
-        statusEl.textContent = `✓ @${d.username}`;
-        statusEl.className   = 'api-status ok';
-        closeSetup();
-      } else {
-        statusEl.textContent = d.error || '✗ invalid credentials';
-        statusEl.className   = 'api-status err';
-        openSetup();
-      }
-    } catch {
-      statusEl.textContent = '✗ server not running — npm start';
-      statusEl.className   = 'api-status err';
-    }
-  }
-
-  // ── setup panel ───────────────────────────────────────────
-  function openSetup() {
-    document.getElementById('setupPanel').classList.add('open');
-  }
-
-  function closeSetup() {
-    document.getElementById('setupPanel').classList.remove('open');
-  }
-
-  async function saveSetup() {
-    const apiKey       = document.getElementById('setupApiKey').value.trim();
-    const apiSecret    = document.getElementById('setupApiSecret').value.trim();
-    const accessToken  = document.getElementById('setupAccessToken').value.trim();
-    const accessSecret = document.getElementById('setupAccessSecret').value.trim();
-
-    const statusEl = document.getElementById('setupStatus');
-    const saveBtn  = document.getElementById('setupSaveBtn');
-
-    if (!apiKey || !apiSecret || !accessToken || !accessSecret) {
-      statusEl.textContent = 'All four fields required';
-      statusEl.className   = 'setup-status err';
-      return;
-    }
-
-    saveBtn.disabled     = true;
-    saveBtn.textContent  = 'Verifying…';
-    statusEl.textContent = '';
-    statusEl.className   = 'setup-status';
-
-    try {
-      const res  = await fetch(`${API_URL}/setup`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ apiKey, apiSecret, accessToken, accessSecret }),
-      });
-      const data = await res.json();
-
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-
-      // success — clear fields, close panel, update status bar
-      ['setupApiKey','setupApiSecret','setupAccessToken','setupAccessSecret']
-        .forEach(id => { document.getElementById(id).value = ''; });
-
-      document.getElementById('apiStatus').textContent = `✓ @${data.username}`;
-      document.getElementById('apiStatus').className   = 'api-status ok';
-      closeSetup();
-      toast(`Connected as @${data.username}`);
+      el.innerHTML = data.tweets.map(t => `
+        <div class="tweet-item">
+          <div class="tweet-text">${esc(t.text)}</div>
+          <div class="tweet-metrics">
+            <span>\u2764\uFE0F ${fmtNum(t.metrics.likes)}</span>
+            <span>\uD83D\uDD01 ${fmtNum(t.metrics.retweets)}</span>
+            <span>\uD83D\uDCAC ${fmtNum(t.metrics.replies)}</span>
+            <span>\uD83D\uDC41 ${fmtNum(t.metrics.impressions)}</span>
+          </div>
+          <div class="tweet-date">${fmtDate(t.created_at)}</div>
+        </div>
+      `).join('');
     } catch (e) {
-      statusEl.textContent = e.message;
-      statusEl.className   = 'setup-status err';
-    } finally {
-      saveBtn.disabled    = false;
-      saveBtn.textContent = 'Save & connect';
+      document.getElementById('feedList').innerHTML = `<div class="empty-state">Could not load feed: ${e.message}</div>`;
     }
   }
 
-  // call once on load to set initial button label
-  onModeChange();
+  // ── schedule tab ───────────────────────────────────────
 
-  // ── helpers ──────────────────────────────────────────────
+  async function loadQueue() {
+    try {
+      const res = await fetch(`${API}/queue`);
+      const data = await res.json();
+      const el = document.getElementById('queueList');
+
+      if (!data.items?.length) {
+        el.innerHTML = '<div class="empty-state">No scheduled posts</div>';
+        return;
+      }
+
+      el.innerHTML = data.items.map(item => {
+        const tweets = JSON.parse(item.tweets_json || '[]');
+        const preview = tweets[0]?.text || '(empty)';
+        const countdown = item.status === 'pending' ? getCountdown(item.scheduled_at) : '';
+
+        return `
+          <div class="queue-item">
+            <span class="queue-status ${item.status}">${item.status}</span>
+            ${countdown ? `<span class="queue-countdown">${countdown}</span>` : ''}
+            <div class="queue-time">Scheduled: ${fmtDate(item.scheduled_at)}</div>
+            <div class="draft-body">${esc(preview.slice(0, 200))}</div>
+            ${item.tweet_url ? `<div class="draft-meta"><a href="${item.tweet_url}" target="_blank">${item.tweet_url}</a></div>` : ''}
+            ${item.error ? `<div class="draft-meta" style="color:var(--danger)">Error: ${esc(item.error)}</div>` : ''}
+            ${item.status === 'pending' ? `<div class="draft-actions"><button class="btn btn-danger" onclick="cancelScheduled('${item.id}')">Cancel</button></div>` : ''}
+          </div>
+        `;
+      }).join('');
+    } catch (e) {
+      document.getElementById('queueList').innerHTML = `<div class="empty-state">Could not load queue: ${e.message}</div>`;
+    }
+  }
+
+  async function cancelScheduled(id) {
+    try {
+      await fetch(`${API}/queue/${id}`, { method: 'DELETE' });
+      loadQueue();
+      toast('Cancelled');
+    } catch (e) {
+      toast('Error: ' + e.message, true);
+    }
+  }
+
+  // ── assets tab ─────────────────────────────────────────
+
+  async function loadAssets() {
+    try {
+      const res = await fetch(`${API}/assets`);
+      const data = await res.json();
+      const assets = data.assets || [];
+
+      const images = assets.filter(a => a.type === 'image');
+      const texts = assets.filter(a => a.type !== 'image');
+
+      const imgEl = document.getElementById('imageAssets');
+      if (images.length) {
+        imgEl.innerHTML = images.map(a => {
+          const src = a.file_path ? `${API}/media/assets/${a.file_path.split('/').pop()}` : '';
+          return `
+            <div class="asset-card">
+              <img src="${src}" alt="${esc(a.title || '')}">
+              <div class="asset-info">${esc(a.title || 'Untitled')}</div>
+              <button class="asset-del" onclick="deleteAsset('${a.id}')" title="Delete">\u00d7</button>
+            </div>
+          `;
+        }).join('');
+      } else {
+        imgEl.innerHTML = '';
+      }
+
+      const txtEl = document.getElementById('textAssets');
+      if (texts.length) {
+        txtEl.innerHTML = texts.map(a => `
+          <div class="text-asset">
+            ${a.title ? `<div class="text-asset-title">${esc(a.title)}</div>` : ''}
+            <div class="text-asset-body">${esc(a.content || '')}</div>
+            <button class="asset-del" style="display:flex;top:8px;right:8px;" onclick="deleteAsset('${a.id}')" title="Delete">\u00d7</button>
+          </div>
+        `).join('');
+      } else {
+        txtEl.innerHTML = '';
+      }
+
+      if (!images.length && !texts.length) {
+        imgEl.innerHTML = '<div class="empty-state">No assets yet</div>';
+      }
+    } catch (e) {
+      document.getElementById('imageAssets').innerHTML = `<div class="empty-state">Could not load assets: ${e.message}</div>`;
+    }
+  }
+
+  function triggerAssetUpload() {
+    document.getElementById('assetFileInput').click();
+  }
+
+  async function handleAssetUpload(input) {
+    for (const file of input.files) {
+      const formData = new FormData();
+      formData.append('file', file);
+      try {
+        await fetch(`${API}/assets`, { method: 'POST', body: formData });
+      } catch (e) {
+        toast('Upload error: ' + e.message, true);
+      }
+    }
+    input.value = '';
+    loadAssets();
+    toast('Uploaded');
+  }
+
+  function promptNewNote() {
+    const title = prompt('Note title (optional):');
+    if (title === null) return;
+    const content = prompt('Note content:');
+    if (!content) return;
+
+    fetch(`${API}/assets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'text', title, content }),
+    }).then(() => {
+      loadAssets();
+      toast('Note saved');
+    }).catch(e => toast('Error: ' + e.message, true));
+  }
+
+  async function deleteAsset(id) {
+    try {
+      await fetch(`${API}/assets/${id}`, { method: 'DELETE' });
+      loadAssets();
+      toast('Deleted');
+    } catch (e) {
+      toast('Error: ' + e.message, true);
+    }
+  }
+
+  // ── helpers ────────────────────────────────────────────
+
   function esc(t) {
     const d = document.createElement('div');
-    d.appendChild(document.createTextNode(t));
+    d.appendChild(document.createTextNode(t || ''));
     return d.innerHTML;
+  }
+
+  function fmtNum(n) {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+    if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+    return String(n);
+  }
+
+  function fmtDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
+           d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function getCountdown(iso) {
+    const diff = new Date(iso) - Date.now();
+    if (diff <= 0) return 'now';
+    const h = Math.floor(diff / 3600000);
+    const m = Math.floor((diff % 3600000) / 60000);
+    if (h > 0) return `in ${h}h ${m}m`;
+    return `in ${m}m`;
   }
 
   let _toastTimer;
@@ -1205,6 +1538,26 @@
     clearTimeout(_toastTimer);
     _toastTimer = setTimeout(() => el.classList.remove('show'), 3400);
   }
+
+  // ── keyboard shortcuts ─────────────────────────────────
+
+  document.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      if (!document.getElementById('postBtn').disabled) handlePost();
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      e.preventDefault();
+      saveDraftFromComposer();
+    }
+  });
+
+  // ── init ───────────────────────────────────────────────
+
+  addCard();
+  checkVPS();
+  loadDrafts();
+  setInterval(checkVPS, 30000);
 </script>
 
 </body>
