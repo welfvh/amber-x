@@ -167,6 +167,11 @@ def execute_scheduled_post(schedule_id: str, tweets_json: str):
                 (str(e), schedule_id),
             )
 
+# In-flight dedup: prevent concurrent identical posts
+import threading
+_post_lock = threading.Lock()
+_posts_in_flight: set[str] = set()
+
 # ── routes ───────────────────────────────────────────────────
 
 @app.get("/status")
@@ -195,12 +200,19 @@ async def upload(file: UploadFile = File(...)):
 
 @app.post("/post")
 def post(req: PostRequest):
-    """Post a tweet or thread immediately."""
+    """Post a tweet or thread immediately. Includes duplicate protection."""
     if not req.tweets:
         raise HTTPException(400, "No tweets provided")
     for t in req.tweets:
         if len(t.text or "") > 280:
             raise HTTPException(400, f"Tweet over 280 characters: {len(t.text)}")
+
+    # Content-based dedup key
+    content_key = "||".join(t.text or "" for t in req.tweets)
+    with _post_lock:
+        if content_key in _posts_in_flight:
+            raise HTTPException(409, "Duplicate post already in flight")
+        _posts_in_flight.add(content_key)
 
     try:
         result = post_tweets(req.tweets)
@@ -208,6 +220,9 @@ def post(req: PostRequest):
     except Exception as e:
         log.error(f"Post failed: {e}")
         raise HTTPException(500, str(e))
+    finally:
+        with _post_lock:
+            _posts_in_flight.discard(content_key)
 
 
 @app.post("/schedule")

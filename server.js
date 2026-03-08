@@ -216,6 +216,9 @@ const MIME_TYPES = {
   '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
 };
 
+// In-flight dedup for raw (non-draft) posts
+const postInFlight = new Set();
+
 // ── routes ──────────────────────────────────────────────────
 
 const server = http.createServer(async (req, res) => {
@@ -349,6 +352,7 @@ const server = http.createServer(async (req, res) => {
     // ── posting ───────────────────────────────────────────
 
     // POST /post — post a draft or raw tweets
+    // Duplicate protection: in-flight lock + draft status check
     if (req.method === 'POST' && path === '/post') {
       const body = await readBody(req);
       let tweets;
@@ -357,52 +361,68 @@ const server = http.createServer(async (req, res) => {
       if (draftId) {
         const draft = stmts.getDraft.get(draftId);
         if (!draft) return send(res, 404, { error: 'Draft not found' });
+        // Block if already posted or currently being posted
+        if (draft.status === 'posted') return send(res, 409, { error: 'Already posted', url: draft.tweet_url });
+        if (draft.status === 'posting') return send(res, 409, { error: 'Post already in flight — wait for it to complete' });
+        // Mark as posting to prevent concurrent attempts
+        stmts.updateDraftStatus.run('posting', draftId);
         tweets = JSON.parse(draft.thread_json);
       } else {
+        // For raw posts (no draft), check content-based dedup
+        const textKey = (body.tweets || [{ text: body.text }]).map(t => t.text).join('||');
+        if (postInFlight.has(textKey)) return send(res, 409, { error: 'Duplicate post in flight' });
+        postInFlight.add(textKey);
+        // Auto-clear after 30s as safety valve
+        setTimeout(() => postInFlight.delete(textKey), 30000);
         tweets = body.tweets || [{ text: body.text }];
       }
 
-      // Upload any local media to VPS first
-      const vpsPayload = [];
-      for (let i = 0; i < tweets.length; i++) {
-        const t = tweets[i];
-        const mediaPaths = [];
+      try {
+        // Upload any local media to VPS first
+        const vpsPayload = [];
+        for (let i = 0; i < tweets.length; i++) {
+          const t = tweets[i];
+          const mediaPaths = [];
+
+          if (draftId) {
+            const mediaRows = stmts.listMedia.all(draftId).filter(m => m.tweet_idx === i);
+            for (const m of mediaRows) {
+              if (existsSync(m.file_path)) {
+                const vpsPath = await uploadMediaToVPS(m.file_path);
+                mediaPaths.push(vpsPath);
+              }
+            }
+          }
+
+          // Also handle inline base64 media (from UI)
+          if (t.media && Array.isArray(t.media)) {
+            for (const img of t.media) {
+              if (img.data) {
+                const ext = (img.mimeType || 'image/png').split('/')[1] || 'png';
+                const tmpPath = resolve(MEDIA_DIR, `tmp_${randomUUID().slice(0,8)}.${ext}`);
+                writeFileSync(tmpPath, Buffer.from(img.data, 'base64'));
+                const vpsPath = await uploadMediaToVPS(tmpPath);
+                mediaPaths.push(vpsPath);
+                unlinkSync(tmpPath);
+              }
+            }
+          }
+
+          vpsPayload.push({ text: t.text || ' ', media_paths: mediaPaths.length ? mediaPaths : null });
+        }
+
+        const result = await vpsRequest('POST', '/post', { tweets: vpsPayload });
 
         if (draftId) {
-          const mediaRows = stmts.listMedia.all(draftId).filter(m => m.tweet_idx === i);
-          for (const m of mediaRows) {
-            if (existsSync(m.file_path)) {
-              const vpsPath = await uploadMediaToVPS(m.file_path);
-              mediaPaths.push(vpsPath);
-            }
-          }
+          stmts.updateDraftPosted.run(new Date().toISOString(), result.url, draftId);
         }
 
-        // Also handle inline base64 media (from UI)
-        if (t.media && Array.isArray(t.media)) {
-          for (const img of t.media) {
-            if (img.data) {
-              // Save base64 to temp file, upload to VPS
-              const ext = (img.mimeType || 'image/png').split('/')[1] || 'png';
-              const tmpPath = resolve(MEDIA_DIR, `tmp_${randomUUID().slice(0,8)}.${ext}`);
-              writeFileSync(tmpPath, Buffer.from(img.data, 'base64'));
-              const vpsPath = await uploadMediaToVPS(tmpPath);
-              mediaPaths.push(vpsPath);
-              unlinkSync(tmpPath);
-            }
-          }
-        }
-
-        vpsPayload.push({ text: t.text || ' ', media_paths: mediaPaths.length ? mediaPaths : null });
+        return send(res, 200, { ok: true, url: result.url, id: result.id });
+      } catch (postErr) {
+        // Reset draft status on failure so user can retry
+        if (draftId) stmts.updateDraftStatus.run('draft', draftId);
+        throw postErr;
       }
-
-      const result = await vpsRequest('POST', '/post', { tweets: vpsPayload });
-
-      if (draftId) {
-        stmts.updateDraftPosted.run(new Date().toISOString(), result.url, draftId);
-      }
-
-      return send(res, 200, { ok: true, url: result.url, id: result.id });
     }
 
     // ── scheduling ────────────────────────────────────────
