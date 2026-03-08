@@ -558,6 +558,64 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
 
+    // ── validate (cringe/tone stress test via GPT-5) ─────
+
+    // POST /validate — stress test tweet content before posting
+    if (req.method === 'POST' && path === '/validate') {
+      const body = await readBody(req);
+      const tweets = body.tweets || [{ text: body.text }];
+      const allText = tweets.map(t => t.text).join('\n---\n');
+
+      const prompt = `You are a ruthless content quality gate for @_welf's X/Twitter account. Your job is to catch problems BEFORE they go live.
+
+Score this draft on 5 dimensions (1-10, 10 = perfect):
+
+1. **CRINGE** — forced wordplay, try-hard cleverness, "doesn't vibrate it vibes" energy, anything that makes you wince. 10 = zero cringe.
+2. **WARMTH** — does it feel inviting? Would you want to be this person's friend? 10 = radiantly warm.
+3. **PREACHINESS** — any hint of lecturing, guilt-tripping, "you should", moral superiority? 10 = zero preachiness.
+4. **HOOK** — does the first line stop the scroll? 10 = impossible to keep scrolling.
+5. **AUTHENTICITY** — could only @_welf post this? Or is it generic? 10 = unmistakably his voice.
+
+Then give:
+- **VERDICT**: SHIP / REWORK / KILL
+- **FLAGS**: specific problems (quote the exact words that are problematic)
+- **SUGGESTION**: one concrete fix if REWORK
+
+The account voice is: warm, hopeful, self-deprecating, absurdist humor, outdoor computing lifestyle. Never preachy, never confrontational, never wellness-influencer.
+
+Known failure patterns: guilt trips ("you're scrolling?"), imperative commands ("PLEASE GO OUTSIDE"), vague profundity ("a new time not a new era"), forced wordplay, absence framing ("no coworkers"), countdown formats.
+
+Known success patterns: absurdist reclassification ("hammock is infrastructure"), utility + personality, self-deprecating AI humor, cozy specifics ("thermos of tea"), one-line reframes ("no rent and no ceiling").
+
+DRAFT TO REVIEW:
+${allText}
+
+Respond in JSON: {"scores":{"cringe":N,"warmth":N,"preachiness":N,"hook":N,"authenticity":N},"average":N,"verdict":"SHIP|REWORK|KILL","flags":["..."],"suggestion":"..."}`;
+
+      try {
+        const gptRes = await fetch('http://localhost:8710/ask', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: prompt, context: {} }),
+        });
+        const gptData = await gptRes.json();
+        const content = gptData.content || gptData.response || '';
+
+        // Try to parse JSON from response
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const result = JSON.parse(jsonMatch[0]);
+          return send(res, 200, { ok: true, ...result });
+        }
+
+        // Fallback: return raw text
+        return send(res, 200, { ok: true, raw: content });
+      } catch (e) {
+        // If GPT-5 is down, return a warning but don't block
+        return send(res, 200, { ok: false, error: 'Validator unavailable: ' + e.message, verdict: 'UNKNOWN' });
+      }
+    }
+
     // ── jam (CC integration) ─────────────────────────────
 
     // POST /drafts/:id/jam — prepare draft for CC session

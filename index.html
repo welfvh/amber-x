@@ -773,9 +773,13 @@
         <button class="add-thread-btn" onclick="addCard()">Add to thread</button>
       </div>
 
+      <!-- Validation result bar -->
+      <div id="validateBar" style="display:none; padding:10px 16px; border-top:1px solid var(--border); font-size:13px; line-height:1.5;"></div>
+
       <div class="compose-toolbar">
         <button class="btn btn-ghost" onclick="saveDraftFromComposer()">Save draft</button>
         <div class="spacer"></div>
+        <button class="btn btn-outline" id="validateBtn" onclick="validateDraft()" disabled style="font-size:13px; padding:6px 14px; border-color:var(--accent); color:var(--accent);">Stress Test</button>
         <button class="btn btn-outline" id="scheduleBtn" onclick="openScheduleModal()" disabled>Schedule</button>
         <button class="btn btn-outline" id="jamBtn" onclick="jamCurrentDraft()" disabled>Jam</button>
         <button class="btn btn-primary" id="postBtn" onclick="handlePost()" disabled>Post</button>
@@ -1009,6 +1013,7 @@
     document.getElementById('postBtn').disabled = !ok;
     document.getElementById('scheduleBtn').disabled = !ok;
     document.getElementById('jamBtn').disabled = !ok;
+    document.getElementById('validateBtn').disabled = !ok;
   }
 
   // ── image handling ─────────────────────────────────────
@@ -1078,6 +1083,78 @@
     cardSeq = 0;
     currentEditDraftId = null;
     addCard();
+  }
+
+  // ── post handler ───────────────────────────────────────
+
+  // ── stress test (cringe/tone validator) ─────────────
+
+  async function validateDraft() {
+    const thread = collectThread();
+    if (!thread.length) return;
+
+    const btn = document.getElementById('validateBtn');
+    const bar = document.getElementById('validateBar');
+    btn.disabled = true;
+    btn.textContent = 'Testing\u2026';
+    bar.style.display = 'block';
+    bar.innerHTML = '<span style="color:var(--text-2)">Running stress test\u2026</span>';
+
+    try {
+      const res = await fetch(`${API}/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tweets: thread.map(t => ({ text: t.text })) }),
+      });
+      const data = await res.json();
+
+      if (!data.ok && data.error) {
+        bar.innerHTML = `<span style="color:var(--warning)">Validator offline: ${esc(data.error)}</span>`;
+        return;
+      }
+
+      const s = data.scores || {};
+      const avg = data.average || 0;
+      const verdict = data.verdict || 'UNKNOWN';
+
+      const verdictColors = { SHIP: 'var(--success)', REWORK: 'var(--warning)', KILL: 'var(--danger)', UNKNOWN: 'var(--text-2)' };
+      const verdictColor = verdictColors[verdict] || 'var(--text-2)';
+
+      let html = `<div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">`;
+      html += `<span style="font-weight:800; color:${verdictColor}; font-size:15px;">${verdict}</span>`;
+      html += `<span style="color:var(--text-2)">avg ${avg.toFixed?.(1) ?? avg}/10</span>`;
+
+      // Score pills
+      const dims = [
+        ['cringe', s.cringe], ['warmth', s.warmth], ['preachy', s.preachiness],
+        ['hook', s.hook], ['authentic', s.authenticity]
+      ];
+      for (const [label, score] of dims) {
+        if (score == null) continue;
+        const color = score >= 8 ? 'var(--success)' : score >= 5 ? 'var(--warning)' : 'var(--danger)';
+        html += `<span style="background:${color}22; color:${color}; padding:2px 8px; border-radius:10px; font-weight:600; font-size:12px;">${label} ${score}</span>`;
+      }
+      html += `</div>`;
+
+      // Flags
+      if (data.flags?.length) {
+        html += `<div style="margin-top:6px; color:var(--danger); font-size:12px;">`;
+        html += data.flags.map(f => `\u26a0 ${esc(f)}`).join('<br>');
+        html += `</div>`;
+      }
+
+      // Suggestion
+      if (data.suggestion && verdict === 'REWORK') {
+        html += `<div style="margin-top:6px; color:var(--accent); font-size:12px;">\u2192 ${esc(data.suggestion)}</div>`;
+      }
+
+      bar.innerHTML = html;
+    } catch (e) {
+      bar.innerHTML = `<span style="color:var(--danger)">Error: ${esc(e.message)}</span>`;
+    } finally {
+      btn.textContent = 'Stress Test';
+      updateButtons();
+    }
   }
 
   // ── post handler ───────────────────────────────────────
