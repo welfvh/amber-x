@@ -1,13 +1,12 @@
 {
-  "name": "amber-x",
-  "version": "1.0.0",
-  "description": "Local X/Twitter composer with thread and image support",
+  "name": "x-vibepoastry",
+  "version": "2.0.0",
+  "description": "X content engine — compose, schedule, analyze tweets with Claude Code integration",
   "type": "module",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "dotenv": "^17.3.1",
-    "twitter-api-v2": "^1.29.0"
+    "better-sqlite3": "^11.8.1"
   }
 }
