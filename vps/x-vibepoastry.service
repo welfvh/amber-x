@@ -5,7 +5,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/opt/x-vibepoastry
-ExecStart=/usr/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 8142
+ExecStart=/opt/x-vibepoastry/venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8142
 Restart=always
 RestartSec=5
 EnvironmentFile=/opt/x-vibepoastry/.env
