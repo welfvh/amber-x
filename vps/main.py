@@ -225,6 +225,19 @@ def post(req: PostRequest):
             _posts_in_flight.discard(content_key)
 
 
+@app.delete("/tweet/{tweet_id}")
+def delete_tweet(tweet_id: str):
+    """Delete a tweet by ID."""
+    try:
+        client = get_v2_client()
+        client.delete_tweet(tweet_id)
+        log.info(f"Deleted tweet {tweet_id}")
+        return {"ok": True, "deleted": tweet_id}
+    except Exception as e:
+        log.error(f"Delete failed: {e}")
+        raise HTTPException(500, str(e))
+
+
 @app.post("/schedule")
 def schedule(req: ScheduleRequest):
     """Schedule a post for a future time."""

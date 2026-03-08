@@ -460,6 +460,13 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, data);
     }
 
+    // DELETE /tweet/:id — delete a tweet
+    const tweetDelMatch = path.match(/^\/tweet\/(\d+)$/);
+    if (req.method === 'DELETE' && tweetDelMatch) {
+      const data = await vpsRequest('DELETE', `/tweet/${tweetDelMatch[1]}`);
+      return send(res, 200, data);
+    }
+
     // ── feed + stats (proxy to VPS) ──────────────────────
 
     if (req.method === 'GET' && path === '/tweets') {
