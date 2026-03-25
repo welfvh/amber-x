@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import contextmanager
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -32,8 +32,20 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("x-vibepoastry")
 
-app = FastAPI(title="x-vibepoastry", version="1.0.0")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# ── auth middleware ──────────────────────────────────────────
+# Require Bearer token on all endpoints. Token set via XVP_AUTH_TOKEN env var.
+
+def verify_token(request: Request):
+    """Dependency that checks Bearer token on every request."""
+    expected = os.environ.get("XVP_AUTH_TOKEN")
+    if not expected:
+        raise HTTPException(500, "XVP_AUTH_TOKEN not configured")
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer ") or auth_header[7:] != expected:
+        raise HTTPException(401, "Unauthorized")
+
+app = FastAPI(title="x-vibepoastry", version="1.0.0", dependencies=[Depends(verify_token)])
+app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3131"], allow_methods=["*"], allow_headers=["*"])
 
 # ── tweepy clients ────────────────────────────────────────────
 

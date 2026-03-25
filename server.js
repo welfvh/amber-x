@@ -28,6 +28,14 @@ const ASSETS_DIR = resolve(DATA_DIR, 'media/assets');
 const JAM_DIR = resolve(DATA_DIR, 'jam');
 const DB_PATH = resolve(DATA_DIR, 'data.db');
 
+// Auth token for VPS x-vibepoastry service — read from Keychain at startup
+let VPS_AUTH_TOKEN = '';
+try {
+  VPS_AUTH_TOKEN = execSync('security find-generic-password -s "cc/x-vibepoastry" -a "auth_token" -w', { encoding: 'utf8' }).trim();
+} catch {
+  console.error('WARNING: cc/x-vibepoastry auth token not found in Keychain');
+}
+
 // ── ensure directories ──────────────────────────────────────
 
 [DATA_DIR, MEDIA_DIR, ASSETS_DIR, JAM_DIR].forEach(d => mkdirSync(d, { recursive: true }));
@@ -127,7 +135,7 @@ const stmts = {
 
 async function vpsRequest(method, path, body = null) {
   const url = `http://localhost:${VPS_PORT}${path}`;
-  const opts = { method, headers: {} };
+  const opts = { method, headers: { 'Authorization': `Bearer ${VPS_AUTH_TOKEN}` } };
   if (body) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
@@ -158,7 +166,7 @@ async function uploadMediaToVPS(filePath) {
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+    headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}`, 'Authorization': `Bearer ${VPS_AUTH_TOKEN}` },
     body,
   });
   const data = await res.json();
