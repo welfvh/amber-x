@@ -723,6 +723,77 @@
     }
     .toast.show { transform: translateX(-50%) translateY(0); }
     .toast.err  { background: var(--danger); }
+    /* ── multi-feed sub-tabs ─────────────────────────── */
+    .feed-subtabs {
+      display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+      margin-bottom: 14px;
+    }
+    .subtab {
+      padding: 6px 14px; border-radius: 999px; font-size: 13px; font-weight: 600;
+      color: var(--text-2); background: transparent; border: 1px solid var(--border);
+      cursor: pointer; transition: all .15s;
+    }
+    .subtab:hover { background: var(--hover); color: var(--text); }
+    .subtab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .feed-refresh {
+      margin-left: auto; padding: 6px 10px; border-radius: 999px; font-size: 13px;
+      color: var(--text-3); background: transparent; border: 1px solid var(--border);
+      cursor: pointer;
+    }
+    .feed-refresh:hover { color: var(--text); background: var(--hover); }
+    .feed-cache-note { font-size: 11px; color: var(--text-3); margin: -8px 0 12px; }
+
+    /* mentions / replies-to-do */
+    .mention-card { position: relative; }
+    .mention-card.done { opacity: .45; }
+    .mention-author { font-weight: 700; font-size: 14px; color: var(--text); }
+    .mention-actions { display: flex; gap: 10px; margin-top: 8px; align-items: center; }
+    .mention-actions a { color: var(--accent); font-size: 13px; text-decoration: none; }
+    .done-toggle {
+      font-size: 12px; color: var(--text-3); background: transparent;
+      border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; cursor: pointer;
+    }
+    .done-toggle:hover { color: var(--success); border-color: var(--success); }
+
+    /* are.na blocks */
+    .arena-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+    .arena-card {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+      overflow: hidden; display: flex; flex-direction: column;
+    }
+    .arena-card img { width: 100%; aspect-ratio: 4/3; object-fit: cover; background: var(--hover); }
+    .arena-card-body { padding: 10px 12px; font-size: 13px; color: var(--text); }
+    .arena-card-meta { padding: 0 12px 10px; font-size: 11px; color: var(--text-3); }
+    .arena-card a { color: inherit; text-decoration: none; }
+
+    /* topical keyword chips + editor */
+    .kw-chip {
+      display: inline-block; font-size: 11px; color: var(--accent);
+      border: 1px solid var(--accent); border-radius: 999px; padding: 1px 8px; margin-top: 6px;
+    }
+    .kw-editor { margin-bottom: 14px; }
+    .kw-editor textarea {
+      width: 100%; min-height: 100px; background: var(--bg-card); color: var(--text);
+      border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+      font-size: 14px; font-family: inherit; resize: vertical;
+    }
+
+    /* AI suggestions */
+    .suggestion-card { border-left: 3px solid var(--accent); }
+    .suggestion-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+    /* analytics */
+    .analytics-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px; margin-bottom: 16px;
+    }
+    .metric-card {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+      padding: 12px 14px;
+    }
+    .metric-card .m-label { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: .4px; }
+    .metric-card .m-value { font-size: 20px; font-weight: 800; color: var(--text); margin-top: 2px; }
+    .metric-card .m-sub { font-size: 11px; color: var(--text-2); margin-top: 2px; }
   </style>
 </head>
 <body>
@@ -789,14 +860,32 @@
     </div>
   </div>
 
-  <!-- ── FEED TAB ─────────────────────────── -->
+  <!-- ── FEED TAB (multi-feed system) ─────── -->
   <div class="tab-content" id="tab-feed">
-    <div class="feed-header">My Feed</div>
+    <div class="feed-header">Feeds</div>
     <div class="stats-bar" id="statsBar">
       <div class="stat-item"><span class="stat-value" id="statFollowers">—</span><span class="stat-label">Followers</span></div>
       <div class="stat-item"><span class="stat-value" id="statTweets">—</span><span class="stat-label">Tweets</span></div>
       <div class="stat-item"><span class="stat-value" id="statLikes">—</span><span class="stat-label">Recent Likes</span></div>
       <div class="stat-item"><span class="stat-value" id="statImpressions">—</span><span class="stat-label">Recent Impressions</span></div>
+    </div>
+    <div class="feed-subtabs" id="feedSubtabs">
+      <button class="subtab active" data-feed="top" onclick="switchFeed('top')">Top</button>
+      <button class="subtab" data-feed="recent" onclick="switchFeed('recent')">Recent</button>
+      <button class="subtab" data-feed="replies" onclick="switchFeed('replies')">Replies</button>
+      <button class="subtab" data-feed="arena" onclick="switchFeed('arena')">Are.na</button>
+      <button class="subtab" data-feed="topical" onclick="switchFeed('topical')">Topical</button>
+      <button class="subtab" data-feed="suggestions" onclick="switchFeed('suggestions')">AI Drafts</button>
+      <button class="subtab" data-feed="analytics" onclick="switchFeed('analytics')">Analytics</button>
+      <button class="feed-refresh" onclick="refreshCurrentFeed()" title="Force live refresh (uses API credits)">↻</button>
+    </div>
+    <div class="feed-cache-note" id="feedCacheNote"></div>
+    <div class="kw-editor" id="kwEditor" style="display:none;">
+      <textarea id="kwTextarea" placeholder="One keyword per line — drives the Topical feed"></textarea>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button class="btn btn-primary" style="font-size:13px; padding:6px 14px;" onclick="saveKeywords()">Save keywords</button>
+        <button class="btn btn-outline" style="font-size:13px; padding:6px 14px;" onclick="toggleKwEditor(false)">Cancel</button>
+      </div>
     </div>
     <div id="feedList"></div>
   </div>
@@ -836,7 +925,8 @@
 <div class="toast" id="toast"></div>
 
 <script>
-  const API = 'http://localhost:3131';
+  // Same-origin API (works on any port/host: dev :3132, prod :3131, Daylight/mobile via LAN IP)
+  const API = location.origin.startsWith('http') ? location.origin : 'http://localhost:3131';
   const MAX = 280;
   const CIRC = 2 * Math.PI * 9;
   let cardSeq = 0;
@@ -1325,43 +1415,188 @@
 
   // ── feed tab ───────────────────────────────────────────
 
+  let currentFeed = 'top';
+  let statsLoaded = false;
+
   async function loadFeed() {
-    // Load stats
-    try {
-      const res = await fetch(`${API}/stats`);
-      const data = await res.json();
-      document.getElementById('statFollowers').textContent = fmtNum(data.followers);
-      document.getElementById('statTweets').textContent = fmtNum(data.tweet_count);
-      document.getElementById('statLikes').textContent = fmtNum(data.recent_metrics?.total_likes || 0);
-      document.getElementById('statImpressions').textContent = fmtNum(data.recent_metrics?.total_impressions || 0);
-    } catch {}
-
-    // Load tweets
-    try {
-      const res = await fetch(`${API}/tweets?count=20`);
-      const data = await res.json();
-      const el = document.getElementById('feedList');
-
-      if (!data.tweets?.length) {
-        el.innerHTML = '<div class="empty-state">No tweets found</div>';
-        return;
-      }
-
-      el.innerHTML = data.tweets.map(t => `
-        <div class="tweet-item">
-          <div class="tweet-text">${esc(t.text)}</div>
-          <div class="tweet-metrics">
-            <span>\u2764\uFE0F ${fmtNum(t.metrics.likes)}</span>
-            <span>\uD83D\uDD01 ${fmtNum(t.metrics.retweets)}</span>
-            <span>\uD83D\uDCAC ${fmtNum(t.metrics.replies)}</span>
-            <span>\uD83D\uDC41 ${fmtNum(t.metrics.impressions)}</span>
-          </div>
-          <div class="tweet-date">${fmtDate(t.created_at)}</div>
-        </div>
-      `).join('');
-    } catch (e) {
-      document.getElementById('feedList').innerHTML = `<div class="empty-state">Could not load feed: ${e.message}</div>`;
+    if (!statsLoaded) {
+      try {
+        const res = await fetch(`${API}/stats`);
+        const data = await res.json();
+        document.getElementById('statFollowers').textContent = fmtNum(data.followers);
+        document.getElementById('statTweets').textContent = fmtNum(data.tweet_count);
+        document.getElementById('statLikes').textContent = fmtNum(data.recent_metrics?.total_likes || 0);
+        document.getElementById('statImpressions').textContent = fmtNum(data.recent_metrics?.total_impressions || 0);
+        statsLoaded = true;
+      } catch {}
     }
+    renderCurrentFeed();
+  }
+
+  function switchFeed(name) {
+    currentFeed = name;
+    document.querySelectorAll('.subtab').forEach(b => b.classList.toggle('active', b.dataset.feed === name));
+    toggleKwEditor(false);
+    renderCurrentFeed();
+  }
+
+  function refreshCurrentFeed() { renderCurrentFeed(true); }
+
+  function cacheNote(data) {
+    const el = document.getElementById('feedCacheNote');
+    if (data && data.from_cache) {
+      el.textContent = `cached ${data.cached_at ? fmtDate(data.cached_at + 'Z') : ''}${data.stale ? ' \u00B7 live fetch failed, showing stale' : ''} \u2014 \u21BB for live`;
+    } else if (data) {
+      el.textContent = 'live';
+    } else el.textContent = '';
+  }
+
+  function tweetCard(t, extra = '') {
+    return `
+      <div class="tweet-item">
+        ${t.author_username ? `<div class="mention-author">@${esc(t.author_username)}</div>` : ''}
+        <div class="tweet-text">${esc(t.text)}</div>
+        <div class="tweet-metrics">
+          <span>\u2764\uFE0F ${fmtNum(t.metrics.likes)}</span>
+          <span>\uD83D\uDD01 ${fmtNum(t.metrics.retweets)}</span>
+          <span>\uD83D\uDCAC ${fmtNum(t.metrics.replies)}</span>
+          ${t.metrics.impressions != null ? `<span>\uD83D\uDC41 ${fmtNum(t.metrics.impressions)}</span>` : ''}
+        </div>
+        ${extra}
+        <div class="tweet-date">${fmtDate(t.created_at)}</div>
+      </div>`;
+  }
+
+  async function renderCurrentFeed(refresh = false) {
+    const el = document.getElementById('feedList');
+    const q = refresh ? '&refresh=1' : '';
+    el.innerHTML = '<div class="empty-state">Loading\u2026</div>';
+    try {
+      if (currentFeed === 'top' || currentFeed === 'recent') {
+        const res = await fetch(`${API}/feeds/mine?sort=${currentFeed === 'top' ? 'top' : 'recent'}${q}`);
+        const data = await res.json();
+        cacheNote(data);
+        el.innerHTML = (data.tweets || []).map(t => tweetCard(t)).join('') || '<div class="empty-state">No tweets</div>';
+
+      } else if (currentFeed === 'replies') {
+        const res = await fetch(`${API}/feeds/replies?x=1${q}`);
+        const data = await res.json();
+        cacheNote(data);
+        const open = (data.mentions || []).filter(m => !m.done);
+        const done = (data.mentions || []).filter(m => m.done);
+        const card = m => `
+          <div class="tweet-item mention-card${m.done ? ' done' : ''}">
+            <div class="mention-author">@${esc(m.author_username)}</div>
+            <div class="tweet-text">${esc(m.text)}</div>
+            <div class="mention-actions">
+              <a href="https://x.com/i/web/status/${m.id}" target="_blank">Reply on X \u2197</a>
+              <button class="done-toggle" onclick="toggleReplyDone('${m.id}', ${!m.done})">${m.done ? 'undo' : 'mark replied'}</button>
+            </div>
+          </div>`;
+        el.innerHTML =
+          (open.length ? open.map(card).join('') : '<div class="empty-state">Inbox zero \u2014 no replies owed \uD83C\uDF89</div>') +
+          (done.length ? `<div class="feed-cache-note" style="margin:14px 0 8px;">handled (${done.length})</div>` + done.map(card).join('') : '');
+
+      } else if (currentFeed === 'arena') {
+        const res = await fetch(`${API}/feeds/arena?x=1${q}`);
+        const data = await res.json();
+        cacheNote(data);
+        el.innerHTML = `<div class="arena-grid">` + (data.blocks || []).map(b => `
+          <div class="arena-card">
+            ${b.image ? `<img src="${b.image}" loading="lazy" alt="">` : ''}
+            <div class="arena-card-body">${b.source_url ? `<a href="${b.source_url}" target="_blank">` : ''}${esc(b.title || (b.content || '').slice(0, 120) || '(untitled)')}${b.source_url ? ' \u2197</a>' : ''}</div>
+            <div class="arena-card-meta">${esc(b.channel)} \u00B7 ${esc(b.class)}</div>
+          </div>`).join('') + `</div>`;
+
+      } else if (currentFeed === 'topical') {
+        const res = await fetch(`${API}/feeds/topical?x=1${q}`);
+        const data = await res.json();
+        cacheNote(data);
+        const kwBtn = `<button class="btn btn-outline" style="font-size:13px; padding:6px 14px; margin-bottom:12px;" onclick="openKwEditor()">Edit keywords (${(data.keywords || []).length})</button>`;
+        const errNote = data.errors ? `<div class="feed-cache-note">\u26A0\uFE0E ${data.errors.length} keyword(s) failed \u2014 ${esc(data.errors[0].error)}${data.errors[0].error === 'Not Found' ? ' (VPS /search not deployed yet)' : ''}</div>` : '';
+        el.innerHTML = kwBtn + errNote +
+          ((data.tweets || []).map(t => tweetCard(t, `<span class="kw-chip">${esc(t.matched_keyword)}</span>`)).join('') ||
+           '<div class="empty-state">No topical tweets yet</div>');
+
+      } else if (currentFeed === 'suggestions') {
+        const res = await fetch(`${API}/drafts?kind=suggestion`);
+        const data = await res.json();
+        cacheNote(null);
+        el.innerHTML = (data.drafts || []).map(d => `
+          <div class="tweet-item suggestion-card">
+            ${d.thread.map(t => `<div class="tweet-text">${esc(t.text)}</div>`).join('<hr style="border:none;border-top:1px solid var(--border);margin:8px 0;">')}
+            <div class="suggestion-actions">
+              <button class="btn btn-primary" style="font-size:12px; padding:5px 12px;" onclick="promoteSuggestion('${d.id}')">\u2192 Compose</button>
+              <button class="btn btn-outline" style="font-size:12px; padding:5px 12px;" onclick="deleteSuggestion('${d.id}')">Dismiss</button>
+            </div>
+          </div>`).join('') || '<div class="empty-state">No AI suggestions yet \u2014 the idea machine fills this tab</div>';
+
+      } else if (currentFeed === 'analytics') {
+        const res = await fetch(`${API}/analytics`);
+        const data = await res.json();
+        cacheNote(null);
+        if (!data.ok) { el.innerHTML = `<div class="empty-state">${esc(data.error)}</div>`; return; }
+        const w = data.windows;
+        const winCard = (label, x) => x ? `
+          <div class="metric-card"><div class="m-label">${label}</div>
+            <div class="m-value">${x.avg_engagement}</div>
+            <div class="m-sub">${x.avg_likes}\u2665 \u00B7 ${fmtNum(x.avg_impressions)} views avg</div></div>` : '';
+        el.innerHTML = `
+          <div class="analytics-grid">
+            <div class="metric-card"><div class="m-label">Last 7 days</div><div class="m-value">${data.counts.last_7d}</div><div class="m-sub">tweets</div></div>
+            <div class="metric-card"><div class="m-label">Last 30 days</div><div class="m-value">${data.counts.last_30d}</div><div class="m-sub">tweets</div></div>
+            <div class="metric-card"><div class="m-label">Last 90 days</div><div class="m-value">${data.counts.last_90d}</div><div class="m-sub">tweets (sample: ${data.sample})</div></div>
+            <div class="metric-card"><div class="m-label">Replies vs posts</div><div class="m-value">${data.replies_vs_posts.replies}:${data.replies_vs_posts.posts}</div><div class="m-sub">of last ${data.sample}</div></div>
+          </div>
+          <div class="feed-header" style="font-size:16px;">Avg engagement per tweet</div>
+          <div class="analytics-grid">
+            ${winCard('Last 10', w.last_10)}${winCard('Last 20', w.last_20)}${winCard('Last 50', w.last_50)}${winCard('Last 100', w.last_100)}
+          </div>
+          <div class="feed-cache-note">engagement = likes + 2\u00B7retweets + replies + 2\u00B7bookmarks \u00B7 computed from cache, costs nothing</div>`;
+      }
+    } catch (e) {
+      el.innerHTML = `<div class="empty-state">Could not load: ${esc(e.message)}</div>`;
+    }
+  }
+
+  async function toggleReplyDone(id, done) {
+    await fetch(`${API}/feeds/replies/${id}/done`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ done }),
+    });
+    renderCurrentFeed();
+  }
+
+  // keyword editor
+  async function openKwEditor() {
+    const res = await fetch(`${API}/settings/feed_keywords`);
+    const data = await res.json();
+    document.getElementById('kwTextarea').value = (data.value || []).join('\n');
+    toggleKwEditor(true);
+  }
+  function toggleKwEditor(show) {
+    document.getElementById('kwEditor').style.display = show ? 'block' : 'none';
+  }
+  async function saveKeywords() {
+    const value = document.getElementById('kwTextarea').value.split('\n').map(s => s.trim()).filter(Boolean);
+    await fetch(`${API}/settings/feed_keywords`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value }),
+    });
+    toggleKwEditor(false);
+    toast('Keywords saved \u2014 refreshing topical feed');
+    renderCurrentFeed(true);
+  }
+
+  // AI suggestions
+  async function promoteSuggestion(id) {
+    await fetch(`${API}/drafts/${id}/promote`, { method: 'POST' });
+    await editDraft(id);
+    toast('Moved to composer');
+  }
+  async function deleteSuggestion(id) {
+    await fetch(`${API}/drafts/${id}`, { method: 'DELETE' });
+    renderCurrentFeed();
   }
 
   // ── schedule tab ───────────────────────────────────────
