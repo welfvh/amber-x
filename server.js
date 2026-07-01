@@ -18,7 +18,7 @@ import { execSync, spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import Database from 'better-sqlite3';
 
-const PORT = 3131;
+const PORT = parseInt(process.env.PORT || '3131', 10);
 const __dir = dirname(fileURLToPath(import.meta.url));
 const VPS_HOST = 'root@162.55.60.42';
 const VPS_PORT = 8142;
@@ -107,13 +107,45 @@ db.exec(`
     created_at TEXT,
     fetched_at TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS feed_cache (
+    feed_key TEXT PRIMARY KEY,
+    json TEXT NOT NULL,
+    fetched_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS reply_status (
+    tweet_id TEXT PRIMARY KEY,
+    done_at TEXT DEFAULT (datetime('now'))
+  );
 `);
+
+// Migration: drafts.kind ('draft' | 'suggestion') — AI-suggested drafts live
+// in their own tab and never mix into the composer's draft list.
+const draftCols = db.prepare('PRAGMA table_info(drafts)').all().map(c => c.name);
+if (!draftCols.includes('kind')) {
+  db.exec("ALTER TABLE drafts ADD COLUMN kind TEXT DEFAULT 'draft'");
+}
+
+// Seed default feed settings (only if unset)
+const seedSetting = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
+seedSetting.run('feed_keywords', JSON.stringify([
+  'e-ink screen', 'paper-like display', 'daylight computer',
+  'screen flicker PWM', 'blue light sleep', 'amber computing',
+]));
+seedSetting.run('arena_channels', JSON.stringify(['amber-kcuxgs11jy4']));
 
 // Prepared statements for performance
 const stmts = {
-  listDrafts: db.prepare('SELECT * FROM drafts ORDER BY updated_at DESC'),
+  listDrafts: db.prepare("SELECT * FROM drafts WHERE kind = ? ORDER BY updated_at DESC"),
   getDraft: db.prepare('SELECT * FROM drafts WHERE id = ?'),
-  insertDraft: db.prepare('INSERT INTO drafts (id, thread_json) VALUES (?, ?)'),
+  insertDraft: db.prepare("INSERT INTO drafts (id, thread_json, kind) VALUES (?, ?, ?)"),
   updateDraft: db.prepare('UPDATE drafts SET thread_json = ?, updated_at = datetime(\'now\') WHERE id = ?'),
   updateDraftStatus: db.prepare('UPDATE drafts SET status = ?, updated_at = datetime(\'now\') WHERE id = ?'),
   updateDraftPosted: db.prepare('UPDATE drafts SET status = \'posted\', posted_at = ?, tweet_url = ?, updated_at = datetime(\'now\') WHERE id = ?'),
@@ -129,7 +161,49 @@ const stmts = {
   getAsset: db.prepare('SELECT * FROM assets WHERE id = ?'),
   insertAsset: db.prepare('INSERT INTO assets (id, type, title, content, file_path, tags) VALUES (?, ?, ?, ?, ?, ?)'),
   deleteAsset: db.prepare('DELETE FROM assets WHERE id = ?'),
+
+  getSetting: db.prepare('SELECT value FROM settings WHERE key = ?'),
+  setSetting: db.prepare(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`),
+
+  getFeedCache: db.prepare('SELECT json, fetched_at FROM feed_cache WHERE feed_key = ?'),
+  setFeedCache: db.prepare(`INSERT INTO feed_cache (feed_key, json, fetched_at) VALUES (?, ?, datetime('now'))
+    ON CONFLICT(feed_key) DO UPDATE SET json = excluded.json, fetched_at = datetime('now')`),
+
+  markReplyDone: db.prepare('INSERT OR IGNORE INTO reply_status (tweet_id) VALUES (?)'),
+  unmarkReplyDone: db.prepare('DELETE FROM reply_status WHERE tweet_id = ?'),
+  listRepliesDone: db.prepare('SELECT tweet_id FROM reply_status'),
+
+  upsertTweetCache: db.prepare(`INSERT INTO tweets_cache (tweet_id, text, metrics_json, created_at, fetched_at)
+    VALUES (?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(tweet_id) DO UPDATE SET metrics_json = excluded.metrics_json, fetched_at = datetime('now')`),
 };
+
+// ── feed cache helper ───────────────────────────────────────
+// TTL-cached fetch: protects pay-as-you-go X API credits. `refresh=1` forces.
+async function cachedFeed(key, ttlMinutes, refresh, fetcher) {
+  const row = stmts.getFeedCache.get(key);
+  if (row && !refresh) {
+    const ageMin = (Date.now() - new Date(row.fetched_at + 'Z').getTime()) / 60000;
+    if (ageMin < ttlMinutes) {
+      return { ...JSON.parse(row.json), cached_at: row.fetched_at, from_cache: true };
+    }
+  }
+  try {
+    const data = await fetcher();
+    stmts.setFeedCache.run(key, JSON.stringify(data));
+    return { ...data, from_cache: false };
+  } catch (e) {
+    // Fetcher failed — serve stale cache if we have it rather than nothing
+    if (row) return { ...JSON.parse(row.json), cached_at: row.fetched_at, from_cache: true, stale: true, error: e.message };
+    throw e;
+  }
+}
+
+// Engagement score for "sorted by how well they worked"
+function engagementScore(m) {
+  return (m.likes || 0) + 2 * (m.retweets || 0) + (m.replies || 0) + 2 * (m.bookmarks || 0);
+}
 
 // ── VPS proxy helpers ───────────────────────────────────────
 
@@ -259,21 +333,32 @@ const server = http.createServer(async (req, res) => {
 
     // ── draft CRUD ────────────────────────────────────────
 
-    // GET /drafts — list all drafts
+    // GET /drafts — list drafts (?kind=suggestion for the AI tab; default: real drafts)
     if (req.method === 'GET' && path === '/drafts') {
-      const drafts = stmts.listDrafts.all().map(d => ({
+      const kind = params.kind === 'suggestion' ? 'suggestion' : 'draft';
+      const drafts = stmts.listDrafts.all(kind).map(d => ({
         ...d, thread: JSON.parse(d.thread_json),
       }));
       return send(res, 200, { drafts });
     }
 
-    // POST /drafts — create draft
+    // POST /drafts — create draft (kind: 'draft' | 'suggestion')
     if (req.method === 'POST' && path === '/drafts') {
       const body = await readBody(req);
       const id = randomUUID().slice(0, 12);
       const thread = body.thread || body.tweets || [{ text: body.text || '' }];
-      stmts.insertDraft.run(id, JSON.stringify(thread));
-      return send(res, 201, { ok: true, id, thread });
+      const kind = body.kind === 'suggestion' ? 'suggestion' : 'draft';
+      stmts.insertDraft.run(id, JSON.stringify(thread), kind);
+      return send(res, 201, { ok: true, id, thread, kind });
+    }
+
+    // POST /drafts/:id/promote — suggestion → real draft (Welf pulls it into the composer)
+    const promoteMatch = path.match(/^\/drafts\/([a-z0-9-]+)\/promote$/);
+    if (req.method === 'POST' && promoteMatch) {
+      const draft = stmts.getDraft.get(promoteMatch[1]);
+      if (!draft) return send(res, 404, { error: 'Not found' });
+      db.prepare("UPDATE drafts SET kind = 'draft', updated_at = datetime('now') WHERE id = ?").run(draft.id);
+      return send(res, 200, { ok: true, id: draft.id });
     }
 
     // GET /drafts/:id
@@ -503,6 +588,151 @@ const server = http.createServer(async (req, res) => {
       }
     }
 
+    // ── multi-feed system ─────────────────────────────────
+    // All X-backed feeds are TTL-cached (feed_cache) to protect credits.
+    // ?refresh=1 forces a live fetch.
+
+    // GET /feeds/mine?sort=top|recent — own tweets, cached 15 min
+    if (req.method === 'GET' && path === '/feeds/mine') {
+      const data = await cachedFeed('mine', 15, params.refresh, async () => {
+        const d = await vpsRequest('GET', '/tweets?count=100');
+        // Persist into tweets_cache for analytics history
+        for (const t of d.tweets || []) {
+          stmts.upsertTweetCache.run(String(t.id), t.text, JSON.stringify(t.metrics), t.created_at);
+        }
+        return d;
+      });
+      let tweets = data.tweets || [];
+      if (params.sort === 'top') {
+        tweets = [...tweets].sort((a, b) => engagementScore(b.metrics) - engagementScore(a.metrics));
+      }
+      return send(res, 200, { ...data, tweets, sort: params.sort || 'recent' });
+    }
+
+    // GET /feeds/replies — mentions inbox with local done-toggle, cached 10 min
+    if (req.method === 'GET' && path === '/feeds/replies') {
+      const data = await cachedFeed('replies', 10, params.refresh, () => vpsRequest('GET', '/activity?count=50'));
+      const done = new Set(stmts.listRepliesDone.all().map(r => r.tweet_id));
+      const mentions = (data.mentions || []).map(m => ({ ...m, done: done.has(String(m.id)) }));
+      return send(res, 200, { ...data, mentions });
+    }
+
+    // POST /feeds/replies/:id/done {done:bool} — toggle replied-to state
+    const replyDoneMatch = path.match(/^\/feeds\/replies\/(\d+)\/done$/);
+    if (req.method === 'POST' && replyDoneMatch) {
+      const body = await readBody(req);
+      if (body.done === false) stmts.unmarkReplyDone.run(replyDoneMatch[1]);
+      else stmts.markReplyDone.run(replyDoneMatch[1]);
+      return send(res, 200, { ok: true });
+    }
+
+    // GET /feeds/arena — blocks from configured Are.na channels, cached 30 min
+    if (req.method === 'GET' && path === '/feeds/arena') {
+      const data = await cachedFeed('arena', 30, params.refresh, async () => {
+        const channels = JSON.parse(stmts.getSetting.get('arena_channels')?.value || '[]');
+        const blocks = [];
+        for (const slug of channels) {
+          const r = await fetch(`https://api.are.na/v2/channels/${encodeURIComponent(slug)}?per=50`, {
+            headers: { 'User-Agent': 'amber-x/2.0' },
+          });
+          if (!r.ok) continue;
+          const ch = await r.json();
+          for (const b of ch.contents || []) {
+            blocks.push({
+              id: b.id,
+              class: b.class,
+              title: b.title || b.generated_title || '',
+              content: b.content || '',
+              image: b.image?.display?.url || b.image?.thumb?.url || null,
+              source_url: b.source?.url || null,
+              channel: ch.title,
+              channel_slug: slug,
+              connected_at: b.connected_at,
+            });
+          }
+        }
+        blocks.sort((a, b) => new Date(b.connected_at) - new Date(a.connected_at));
+        return { blocks, channels };
+      });
+      return send(res, 200, data);
+    }
+
+    // GET /feeds/topical — keyword-curated X search, cached 60 min (credit-hungry)
+    if (req.method === 'GET' && path === '/feeds/topical') {
+      const data = await cachedFeed('topical', 60, params.refresh, async () => {
+        const keywords = JSON.parse(stmts.getSetting.get('feed_keywords')?.value || '[]');
+        const seen = new Map();
+        const errors = [];
+        for (const kw of keywords) {
+          try {
+            const q = encodeURIComponent(`${kw} -is:retweet`);
+            const d = await vpsRequest('GET', `/search?q=${q}&count=25`);
+            for (const t of d.tweets || []) {
+              if (!seen.has(String(t.id))) seen.set(String(t.id), { ...t, matched_keyword: kw });
+            }
+          } catch (e) {
+            errors.push({ keyword: kw, error: e.message });
+          }
+        }
+        const tweets = [...seen.values()].sort((a, b) =>
+          engagementScore(b.metrics) - engagementScore(a.metrics) ||
+          new Date(b.created_at) - new Date(a.created_at));
+        return { tweets, keywords, errors: errors.length ? errors : undefined };
+      });
+      return send(res, 200, data);
+    }
+
+    // ── settings (keyword/algorithm editor backend) ──────
+    const settingMatch = path.match(/^\/settings\/([a-z_]+)$/);
+    if (req.method === 'GET' && settingMatch) {
+      const row = stmts.getSetting.get(settingMatch[1]);
+      if (!row) return send(res, 404, { error: 'Not found' });
+      return send(res, 200, { key: settingMatch[1], value: JSON.parse(row.value) });
+    }
+    if (req.method === 'PUT' && settingMatch) {
+      const body = await readBody(req);
+      stmts.setSetting.run(settingMatch[1], JSON.stringify(body.value));
+      // Invalidate feeds that depend on settings
+      if (settingMatch[1] === 'feed_keywords') db.prepare("DELETE FROM feed_cache WHERE feed_key = 'topical'").run();
+      if (settingMatch[1] === 'arena_channels') db.prepare("DELETE FROM feed_cache WHERE feed_key = 'arena'").run();
+      return send(res, 200, { ok: true, key: settingMatch[1], value: body.value });
+    }
+
+    // ── analytics (computed from cache, zero credits) ─────
+    if (req.method === 'GET' && path === '/analytics') {
+      const row = stmts.getFeedCache.get('mine');
+      if (!row) return send(res, 200, { ok: false, error: 'No tweet data cached yet — open the Mine feed first' });
+      const tweets = (JSON.parse(row.json).tweets || [])
+        .slice()
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+      const now = Date.now();
+      const days = d => tweets.filter(t => now - new Date(t.created_at).getTime() < d * 86400000).length;
+      const windowAvg = n => {
+        const w = tweets.slice(0, n);
+        if (!w.length) return null;
+        const sum = k => w.reduce((s, t) => s + (t.metrics[k] || 0), 0);
+        return {
+          n: w.length,
+          avg_likes: +(sum('likes') / w.length).toFixed(1),
+          avg_retweets: +(sum('retweets') / w.length).toFixed(1),
+          avg_replies: +(sum('replies') / w.length).toFixed(1),
+          avg_impressions: Math.round(sum('impressions') / w.length),
+          avg_engagement: +(w.reduce((s, t) => s + engagementScore(t.metrics), 0) / w.length).toFixed(1),
+        };
+      };
+      const replies = tweets.filter(t => t.text.startsWith('@')).length;
+
+      return send(res, 200, {
+        ok: true,
+        sample: tweets.length,
+        cached_at: row.fetched_at,
+        counts: { last_7d: days(7), last_30d: days(30), last_90d: days(90) },
+        windows: { last_10: windowAvg(10), last_20: windowAvg(20), last_50: windowAvg(50), last_100: windowAvg(100) },
+        replies_vs_posts: { replies, posts: tweets.length - replies },
+      });
+    }
+
     // ── assets ────────────────────────────────────────────
 
     // GET /assets
@@ -596,7 +826,7 @@ const server = http.createServer(async (req, res) => {
 
 // ── startup ─────────────────────────────────────────────────
 
-startTunnel();
+if (process.env.NO_TUNNEL !== '1') startTunnel(); // NO_TUNNEL=1 for dev instances (prod already tunnels :8142)
 
 server.listen(PORT, () => {
   console.log(`x-vibepoastry → http://localhost:${PORT}`);
