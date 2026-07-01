@@ -1,7 +1,8 @@
 """
 x-vibepoastry VPS service — FastAPI app that handles X/Twitter API calls via tweepy.
 Runs on VPS (162.55.60.42:8142) because api.x.com is blocked locally.
-Provides: posting, scheduling, feed retrieval, stats, media upload.
+Provides: posting, scheduling, feed retrieval, stats, media upload, bookmarks.
+Bookmarks require OAuth 2.0 PKCE — one-time browser auth, then auto-refreshes.
 """
 
 import os
@@ -9,11 +10,17 @@ import json
 import uuid
 import sqlite3
 import logging
+import hashlib
+import base64
+import secrets
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import contextmanager
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends
+from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -26,6 +33,7 @@ from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 # ── config ────────────────────────────────────────────────────
 load_dotenv(Path(__file__).parent / ".env")
 DB_PATH = Path(__file__).parent / "schedule.db"
+OAUTH2_TOKEN_FILE = Path(__file__).parent / "oauth2_tokens.json"
 UPLOAD_DIR = Path("/tmp/xvp_uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
@@ -35,8 +43,12 @@ log = logging.getLogger("x-vibepoastry")
 # ── auth middleware ──────────────────────────────────────────
 # Require Bearer token on all endpoints. Token set via XVP_AUTH_TOKEN env var.
 
+AUTH_EXEMPT_PATHS = {"/auth/callback", "/docs", "/openapi.json"}
+
 def verify_token(request: Request):
-    """Dependency that checks Bearer token on every request."""
+    """Dependency that checks Bearer token on every request (except auth callback)."""
+    if request.url.path in AUTH_EXEMPT_PATHS:
+        return
     expected = os.environ.get("XVP_AUTH_TOKEN")
     if not expected:
         raise HTTPException(500, "XVP_AUTH_TOKEN not configured")
@@ -68,6 +80,96 @@ def get_v1_api():
         os.environ["ACCESS_TOKEN_SECRET"],
     )
     return tweepy.API(auth)
+
+# ── OAuth 2.0 PKCE for bookmarks ─────────────────────────────
+# Bookmarks endpoint requires OAuth 2.0 User Context.
+# One-time auth via /auth/init + /auth/callback, then auto-refresh.
+
+OAUTH2_CLIENT_ID = os.environ.get("OAUTH2_CLIENT_ID", "")
+OAUTH2_CLIENT_SECRET = os.environ.get("OAUTH2_CLIENT_SECRET", "")
+OAUTH2_REDIRECT_URI = os.environ.get("OAUTH2_REDIRECT_URI", "http://localhost:3000/callback")
+OAUTH2_SCOPES = "bookmark.read tweet.read users.read offline.access"
+X_USER_ID = "212963105"
+
+# In-memory PKCE state (only needed during auth flow)
+_pkce_state: dict = {}
+
+
+def _load_oauth2_tokens() -> dict | None:
+    """Load stored OAuth 2.0 tokens from disk."""
+    if OAUTH2_TOKEN_FILE.exists():
+        try:
+            return json.loads(OAUTH2_TOKEN_FILE.read_text())
+        except Exception:
+            return None
+    return None
+
+
+def _save_oauth2_tokens(tokens: dict):
+    """Persist OAuth 2.0 tokens to disk."""
+    tokens["saved_at"] = datetime.now(timezone.utc).isoformat()
+    OAUTH2_TOKEN_FILE.write_text(json.dumps(tokens, indent=2))
+    log.info("OAuth 2.0 tokens saved")
+
+
+def _refresh_oauth2_token(refresh_token: str) -> dict:
+    """Exchange refresh token for new access token."""
+    data = urllib.parse.urlencode({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": OAUTH2_CLIENT_ID,
+    }).encode()
+
+    # Confidential client: use Basic auth with client_id:client_secret
+    credentials = base64.b64encode(
+        f"{OAUTH2_CLIENT_ID}:{OAUTH2_CLIENT_SECRET}".encode()
+    ).decode()
+
+    req = urllib.request.Request(
+        "https://api.twitter.com/2/oauth2/token",
+        data=data,
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Authorization": f"Basic {credentials}",
+        },
+    )
+    resp = urllib.request.urlopen(req)
+    tokens = json.loads(resp.read())
+    _save_oauth2_tokens(tokens)
+    return tokens
+
+
+def get_oauth2_access_token() -> str:
+    """Get a valid OAuth 2.0 access token, refreshing if needed."""
+    tokens = _load_oauth2_tokens()
+    if not tokens:
+        raise HTTPException(401, "OAuth 2.0 not authorized. Call /auth/init first.")
+
+    # Try using existing access token; if it fails, refresh
+    return tokens["access_token"]
+
+
+def _oauth2_api_request(url: str) -> dict:
+    """Make an authenticated OAuth 2.0 API request with auto-refresh on 401."""
+    tokens = _load_oauth2_tokens()
+    if not tokens:
+        raise HTTPException(401, "OAuth 2.0 not authorized. Call /auth/init first.")
+
+    # First attempt with current access token
+    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {tokens['access_token']}"})
+    try:
+        resp = urllib.request.urlopen(req)
+        return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        if e.code == 401 and "refresh_token" in tokens:
+            # Token expired — refresh and retry
+            log.info("OAuth 2.0 token expired, refreshing...")
+            new_tokens = _refresh_oauth2_token(tokens["refresh_token"])
+            req2 = urllib.request.Request(url, headers={"Authorization": f"Bearer {new_tokens['access_token']}"})
+            resp2 = urllib.request.urlopen(req2)
+            return json.loads(resp2.read())
+        raise
+
 
 # ── SQLite for schedule queue ─────────────────────────────────
 
@@ -453,6 +555,140 @@ def stats():
     except Exception as e:
         log.error(f"Stats fetch failed: {e}")
         raise HTTPException(500, str(e))
+
+
+# ── OAuth 2.0 PKCE auth routes ───────────────────────────────
+# These are exempt from the XVP_AUTH_TOKEN check (the callback comes from X).
+
+auth_router = FastAPI()
+
+
+@app.get("/auth/init")
+def auth_init():
+    """Start OAuth 2.0 PKCE flow. Returns auth URL to open in browser."""
+    if not OAUTH2_CLIENT_ID:
+        raise HTTPException(500, "OAUTH2_CLIENT_ID not configured in .env")
+
+    code_verifier = secrets.token_urlsafe(64)[:128]
+    code_challenge = base64.urlsafe_b64encode(
+        hashlib.sha256(code_verifier.encode()).digest()
+    ).rstrip(b"=").decode()
+    state = secrets.token_urlsafe(32)
+
+    # Store PKCE state for callback
+    _pkce_state["code_verifier"] = code_verifier
+    _pkce_state["state"] = state
+
+    auth_url = (
+        f"https://twitter.com/i/oauth2/authorize?"
+        f"response_type=code&client_id={OAUTH2_CLIENT_ID}"
+        f"&redirect_uri={urllib.parse.quote(OAUTH2_REDIRECT_URI)}"
+        f"&scope={urllib.parse.quote(OAUTH2_SCOPES)}"
+        f"&state={state}"
+        f"&code_challenge={code_challenge}"
+        f"&code_challenge_method=S256"
+    )
+
+    return {"auth_url": auth_url, "message": "Open this URL in a browser to authorize."}
+
+
+@app.get("/auth/callback", dependencies=[])
+def auth_callback(code: str = "", state: str = "", error: str = ""):
+    """OAuth 2.0 callback — exchanges auth code for tokens."""
+    if error:
+        raise HTTPException(400, f"Auth error: {error}")
+    if not code:
+        raise HTTPException(400, "No authorization code received")
+    if state != _pkce_state.get("state"):
+        raise HTTPException(400, "State mismatch — possible CSRF")
+
+    code_verifier = _pkce_state.get("code_verifier")
+    if not code_verifier:
+        raise HTTPException(400, "No PKCE state found — call /auth/init first")
+
+    # Exchange code for tokens using confidential client (Basic auth)
+    data = urllib.parse.urlencode({
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": OAUTH2_REDIRECT_URI,
+        "code_verifier": code_verifier,
+        "client_id": OAUTH2_CLIENT_ID,
+    }).encode()
+
+    credentials = base64.b64encode(
+        f"{OAUTH2_CLIENT_ID}:{OAUTH2_CLIENT_SECRET}".encode()
+    ).decode()
+
+    req = urllib.request.Request(
+        "https://api.twitter.com/2/oauth2/token",
+        data=data,
+        headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Authorization": f"Basic {credentials}",
+        },
+    )
+
+    try:
+        resp = urllib.request.urlopen(req)
+        tokens = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        log.error(f"Token exchange failed: {e.code} {body}")
+        raise HTTPException(500, f"Token exchange failed: {body}")
+
+    _save_oauth2_tokens(tokens)
+    _pkce_state.clear()
+
+    return {"ok": True, "message": "OAuth 2.0 authorized! Bookmarks endpoint is now available."}
+
+
+@app.get("/auth/status")
+def auth_status():
+    """Check if OAuth 2.0 tokens are available."""
+    tokens = _load_oauth2_tokens()
+    if tokens:
+        return {
+            "authorized": True,
+            "saved_at": tokens.get("saved_at"),
+            "has_refresh": "refresh_token" in tokens,
+        }
+    return {"authorized": False}
+
+
+# ── bookmarks ─────────────────────────────────────────────────
+
+@app.get("/bookmarks")
+def bookmarks(count: int = 25):
+    """Fetch user's bookmarks via OAuth 2.0. Auto-refreshes tokens."""
+    params = urllib.parse.urlencode({
+        "max_results": min(count, 100),
+        "tweet.fields": "created_at,text,author_id",
+        "user.fields": "username,name",
+        "expansions": "author_id",
+    })
+    url = f"https://api.twitter.com/2/users/{X_USER_ID}/bookmarks?{params}"
+
+    try:
+        data = _oauth2_api_request(url)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode()
+        log.error(f"Bookmarks failed: {e.code} {body}")
+        raise HTTPException(e.code, f"X API error: {body}")
+
+    # Format response with author info
+    users = {u["id"]: u for u in data.get("includes", {}).get("users", [])}
+    tweets = []
+    for tw in data.get("data", []):
+        author = users.get(tw.get("author_id", ""), {})
+        tweets.append({
+            "id": tw["id"],
+            "text": tw["text"],
+            "author": f"@{author.get('username', 'unknown')}",
+            "author_name": author.get("name", ""),
+            "created_at": tw.get("created_at"),
+        })
+
+    return {"bookmarks": tweets, "count": len(tweets)}
 
 
 if __name__ == "__main__":
