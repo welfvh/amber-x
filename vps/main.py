@@ -214,6 +214,7 @@ scheduler.start()
 class TweetPayload(BaseModel):
     text: str
     media_paths: Optional[list[str]] = None
+    quote_tweet_id: Optional[str] = None  # for quote-retweet via tws sprout flow
 
 class PostRequest(BaseModel):
     tweets: list[TweetPayload]
@@ -246,6 +247,8 @@ def post_tweets(tweets: list[TweetPayload]) -> dict:
             kwargs["media_ids"] = media_ids
         if previous_id:
             kwargs["in_reply_to_tweet_id"] = previous_id
+        if tweet.quote_tweet_id:
+            kwargs["quote_tweet_id"] = tweet.quote_tweet_id
 
         result = client.create_tweet(**kwargs)
         previous_id = result.data["id"]
@@ -458,6 +461,82 @@ def tweets(count: int = 20):
         raise HTTPException(500, str(e))
 
 
+@app.get("/timeline")
+def timeline(
+    max: int = 100,
+    since_id: Optional[str] = None,
+    pagination_token: Optional[str] = None,
+):
+    """Get the authenticated user's home timeline (reverse-chronological).
+    Used by the tws-feed ingester. Returns same shape as /tweets plus an
+    authors map and a next pagination_token when more pages exist."""
+    try:
+        client = get_v2_client()
+        me = client.get_me()
+
+        response = client.get_home_timeline(
+            user_auth=True,
+            max_results=min(max, 100),
+            since_id=since_id,
+            pagination_token=pagination_token,
+            tweet_fields=[
+                "created_at", "public_metrics", "conversation_id",
+                "author_id", "referenced_tweets", "lang",
+            ],
+            expansions=["author_id"],
+            user_fields=["username", "name", "profile_image_url"],
+        )
+
+        # Build author lookup from expansions
+        authors = {}
+        if response.includes and "users" in response.includes:
+            for u in response.includes["users"]:
+                authors[str(u.id)] = {
+                    "id": str(u.id),
+                    "username": u.username,
+                    "name": u.name,
+                    "profile_image_url": u.profile_image_url,
+                }
+
+        items = []
+        for tw in (response.data or []):
+            pm = tw.public_metrics or {}
+            author = authors.get(str(tw.author_id), {})
+            items.append({
+                "id": str(tw.id),
+                "text": tw.text,
+                "created_at": tw.created_at.isoformat() if tw.created_at else None,
+                "author_id": str(tw.author_id) if tw.author_id else None,
+                "author_username": author.get("username"),
+                "author_name": author.get("name"),
+                "conversation_id": str(tw.conversation_id) if tw.conversation_id else None,
+                "lang": tw.lang,
+                "metrics": {
+                    "likes": pm.get("like_count", 0),
+                    "retweets": pm.get("retweet_count", 0),
+                    "replies": pm.get("reply_count", 0),
+                    "impressions": pm.get("impression_count", 0),
+                    "bookmarks": pm.get("bookmark_count", 0),
+                },
+                "referenced": [
+                    {"type": r.type, "id": str(r.id)} for r in (tw.referenced_tweets or [])
+                ],
+            })
+
+        meta = response.meta or {}
+        return {
+            "items": items,
+            "authors": authors,
+            "next_token": meta.get("next_token"),
+            "newest_id": meta.get("newest_id"),
+            "result_count": meta.get("result_count", len(items)),
+            "username": me.data.username,
+        }
+    except Exception as e:
+        log.error(f"Timeline fetch failed: {e}")
+        raise HTTPException(500, str(e))
+
+
 @app.get("/activity")
 def activity(count: int = 20):
     """Get recent mentions and replies."""
@@ -501,6 +580,57 @@ def activity(count: int = 20):
         return {"mentions": mentions, "username": me.data.username}
     except Exception as e:
         log.error(f"Activity fetch failed: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.get("/search")
+def search(q: str, count: int = 25):
+    """Recent tweet search (last 7 days) for the keyword-curated topical feed."""
+    try:
+        client = get_v2_client()
+        response = client.search_recent_tweets(
+            q,
+            max_results=max(10, min(count, 100)),
+            tweet_fields=["created_at", "public_metrics", "author_id"],
+            expansions=["author_id"],
+            user_fields=["username", "name", "profile_image_url"],
+        )
+
+        if not response.data:
+            return {"tweets": [], "query": q}
+
+        authors = {}
+        if response.includes and "users" in response.includes:
+            for user in response.includes["users"]:
+                authors[user.id] = {
+                    "username": user.username,
+                    "name": user.name,
+                    "profile_image_url": getattr(user, "profile_image_url", None),
+                }
+
+        tweets_list = []
+        for tweet in response.data:
+            pm = tweet.public_metrics or {}
+            author = authors.get(tweet.author_id, {})
+            tweets_list.append({
+                "id": tweet.id,
+                "text": tweet.text,
+                "author_id": tweet.author_id,
+                "author_username": author.get("username", "unknown"),
+                "author_name": author.get("name", ""),
+                "author_image": author.get("profile_image_url"),
+                "created_at": tweet.created_at.isoformat() if tweet.created_at else None,
+                "metrics": {
+                    "likes": pm.get("like_count", 0),
+                    "retweets": pm.get("retweet_count", 0),
+                    "replies": pm.get("reply_count", 0),
+                    "impressions": pm.get("impression_count", 0),
+                },
+            })
+
+        return {"tweets": tweets_list, "query": q}
+    except Exception as e:
+        log.error(f"Search failed: {e}")
         raise HTTPException(500, str(e))
 
 
