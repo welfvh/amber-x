@@ -192,6 +192,12 @@
       gap: 12px;
       padding: 14px 16px 0;
     }
+    .tweet-card.drag-over {
+      outline: 2px dashed var(--accent);
+      outline-offset: -4px;
+      border-radius: 12px;
+      background: rgba(29,155,240,0.06);
+    }
 
     .card-left {
       display: flex;
@@ -547,6 +553,23 @@
       white-space: pre-wrap;
       word-break: break-word;
       margin-bottom: 8px;
+    }
+
+    .tweet-media {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 6px;
+      margin: 4px 0 10px;
+    }
+    .tweet-media.single { grid-template-columns: 1fr; }
+    .tweet-media img {
+      width: 100%;
+      max-height: 340px;
+      object-fit: cover;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--hover);
+      display: block;
     }
 
     .tweet-metrics {
@@ -927,7 +950,7 @@
 <script>
   // Same-origin API (works on any port/host: dev :3132, prod :3131, Daylight/mobile via LAN IP)
   const API = location.origin.startsWith('http') ? location.origin : 'http://localhost:3131';
-  const MAX = 280;
+  const MAX = 25000;  // Premium long-post limit — 280 is obsolete for @_welf
   const CIRC = 2 * Math.PI * 9;
   let cardSeq = 0;
   const cardImages = new Map();
@@ -1029,6 +1052,31 @@
     const ta = card.querySelector('textarea');
     ta.addEventListener('input', () => autoResize(ta));
     autoResize(ta);
+
+    // Drag & drop image files onto the card
+    ['dragenter', 'dragover'].forEach(ev => card.addEventListener(ev, e => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) {
+        e.preventDefault();
+        card.classList.add('drag-over');
+      }
+    }));
+    ['dragleave', 'dragend', 'drop'].forEach(ev => card.addEventListener(ev, e => {
+      if (ev !== 'dragleave' || e.target === card) card.classList.remove('drag-over');
+    }));
+    card.addEventListener('drop', e => {
+      const files = e.dataTransfer?.files;
+      if (files && files.length) { e.preventDefault(); addFilesToCard(id, files); }
+    });
+
+    // Paste image from clipboard into the textarea
+    ta.addEventListener('paste', e => {
+      const imgs = Array.from(e.clipboardData?.items || [])
+        .filter(it => it.kind === 'file' && it.type.startsWith('image/'))
+        .map(it => it.getAsFile())
+        .filter(Boolean);
+      if (imgs.length) { e.preventDefault(); addFilesToCard(id, imgs); }
+    });
+
     setTimeout(() => ta.focus(), 0);
     onInput(id);
     return id;
@@ -1108,26 +1156,31 @@
     document.getElementById(`file-${id}`).click();
   }
 
-  function onFilesChosen(id, input) {
-    const existing = cardImages.get(id) || [];
-    const slots = 4 - existing.length;
-    const files = Array.from(input.files).slice(0, slots);
+  // Shared entry point for the file picker, drag-drop, and paste.
+  function addFilesToCard(id, fileList) {
+    const slots = 4 - (cardImages.get(id) || []).length;
+    if (slots <= 0) { toast('Max 4 images per tweet', true); return; }
+    const files = Array.from(fileList).filter(f => f.type.startsWith('image/')).slice(0, slots);
+    if (!files.length) return;
 
     Promise.all(files.map(file => new Promise(resolve => {
       const reader = new FileReader();
       reader.onload = e => resolve({
         data: e.target.result.split(',')[1],
         mimeType: file.type,
-        name: file.name,
+        name: file.name || 'pasted.png',
         preview: e.target.result,
       });
       reader.readAsDataURL(file);
     }))).then(newImgs => {
-      cardImages.set(id, [...existing, ...newImgs]);
+      cardImages.set(id, [...(cardImages.get(id) || []), ...newImgs]);
       renderImageStrip(id);
       updateButtons();
     });
+  }
 
+  function onFilesChosen(id, input) {
+    addFilesToCard(id, input.files);
     input.value = '';
   }
 
@@ -1451,11 +1504,20 @@
     } else el.textContent = '';
   }
 
+  function tweetMedia(media) {
+    if (!media || !media.length) return '';
+    const cls = media.length === 1 ? 'tweet-media single' : 'tweet-media';
+    return `<div class="${cls}">` +
+      media.map(m => `<img src="${esc(m.url)}" alt="${esc(m.alt || '')}" loading="lazy">`).join('') +
+      `</div>`;
+  }
+
   function tweetCard(t, extra = '') {
     return `
       <div class="tweet-item">
         ${t.author_username ? `<div class="mention-author">@${esc(t.author_username)}</div>` : ''}
         <div class="tweet-text">${esc(t.text)}</div>
+        ${tweetMedia(t.media)}
         <div class="tweet-metrics">
           <span>\u2764\uFE0F ${fmtNum(t.metrics.likes)}</span>
           <span>\uD83D\uDD01 ${fmtNum(t.metrics.retweets)}</span>
