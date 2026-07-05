@@ -421,9 +421,40 @@ def cancel_scheduled(schedule_id: str):
     return {"ok": True}
 
 
+def _media_index(response):
+    """Map media_key -> display dict from an X API v2 response's includes.media."""
+    idx = {}
+    includes = getattr(response, "includes", None) or {}
+    for m in includes.get("media", []) or []:
+        # photos expose .url; video / animated_gif expose .preview_image_url
+        url = getattr(m, "url", None) or getattr(m, "preview_image_url", None)
+        if not url:
+            continue
+        idx[m.media_key] = {
+            "url": url,
+            "type": getattr(m, "type", "photo"),
+            "alt": getattr(m, "alt_text", None),
+        }
+    return idx
+
+
+def _tweet_media(tweet, media_idx):
+    """Ordered list of media display dicts attached to a tweet."""
+    if not media_idx:
+        return []
+    attachments = getattr(tweet, "attachments", None) or {}
+    keys = attachments.get("media_keys", []) if isinstance(attachments, dict) else []
+    return [media_idx[k] for k in keys if k in media_idx]
+
+
+# X API v2 fields needed to surface attached photos/video thumbnails in feeds.
+MEDIA_EXPANSIONS = ["attachments.media_keys"]
+MEDIA_FIELDS = ["url", "preview_image_url", "type", "alt_text"]
+
+
 @app.get("/tweets")
 def tweets(count: int = 20):
-    """Get recent own tweets with public_metrics."""
+    """Get recent own tweets with public_metrics + attached media."""
     try:
         client = get_v2_client()
         me = client.get_me()
@@ -432,13 +463,16 @@ def tweets(count: int = 20):
         response = client.get_users_tweets(
             user_id,
             max_results=min(count, 100),
-            tweet_fields=["created_at", "public_metrics", "conversation_id"],
+            tweet_fields=["created_at", "public_metrics", "conversation_id", "attachments"],
+            expansions=MEDIA_EXPANSIONS,
+            media_fields=MEDIA_FIELDS,
             exclude=["retweets"],
         )
 
         if not response.data:
             return {"tweets": [], "username": me.data.username}
 
+        media_idx = _media_index(response)
         tweets_list = []
         for tweet in response.data:
             pm = tweet.public_metrics or {}
@@ -446,6 +480,7 @@ def tweets(count: int = 20):
                 "id": tweet.id,
                 "text": tweet.text,
                 "created_at": tweet.created_at.isoformat() if tweet.created_at else None,
+                "media": _tweet_media(tweet, media_idx),
                 "metrics": {
                     "likes": pm.get("like_count", 0),
                     "retweets": pm.get("retweet_count", 0),
@@ -591,9 +626,10 @@ def search(q: str, count: int = 25):
         response = client.search_recent_tweets(
             q,
             max_results=max(10, min(count, 100)),
-            tweet_fields=["created_at", "public_metrics", "author_id"],
-            expansions=["author_id"],
+            tweet_fields=["created_at", "public_metrics", "author_id", "attachments"],
+            expansions=["author_id"] + MEDIA_EXPANSIONS,
             user_fields=["username", "name", "profile_image_url"],
+            media_fields=MEDIA_FIELDS,
         )
 
         if not response.data:
@@ -608,6 +644,7 @@ def search(q: str, count: int = 25):
                     "profile_image_url": getattr(user, "profile_image_url", None),
                 }
 
+        media_idx = _media_index(response)
         tweets_list = []
         for tweet in response.data:
             pm = tweet.public_metrics or {}
@@ -620,6 +657,7 @@ def search(q: str, count: int = 25):
                 "author_name": author.get("name", ""),
                 "author_image": author.get("profile_image_url"),
                 "created_at": tweet.created_at.isoformat() if tweet.created_at else None,
+                "media": _tweet_media(tweet, media_idx),
                 "metrics": {
                     "likes": pm.get("like_count", 0),
                     "retweets": pm.get("retweet_count", 0),
