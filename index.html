@@ -1384,7 +1384,10 @@
       const res = await fetch(`${API}/drafts/${id}/jam`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      toast('Jam ready \u2014 run /cc-x-jam in CC');
+      // Server already pbcopy'd on the Mac; also copy in-browser as a fallback
+      // (covers LAN access where the browser isn't on the server machine).
+      try { if (data.prompt && navigator.clipboard) await navigator.clipboard.writeText(data.prompt); } catch {}
+      toast('Jam copied \u2014 paste /cc-x-jam in Terminal');
     } catch (e) {
       toast('Error: ' + e.message, true);
     }

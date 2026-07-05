@@ -804,14 +804,33 @@ const server = http.createServer(async (req, res) => {
       const draft = stmts.getDraft.get(jamMatch[1]);
       if (!draft) return send(res, 404, { error: 'Draft not found' });
 
+      const thread = JSON.parse(draft.thread_json);
       const jamData = {
         draft_id: draft.id,
-        thread: JSON.parse(draft.thread_json),
+        thread,
         created_at: new Date().toISOString(),
       };
 
       writeFileSync(resolve(JAM_DIR, 'active.json'), JSON.stringify(jamData, null, 2));
-      return send(res, 200, { ok: true, message: 'Jam ready — run /cc-x-jam in Claude Code' });
+
+      // Ready-to-paste prompt: invokes /cc-x-jam and carries the draft text
+      // (the skill reads jam/active.json; the inline text is context + fallback).
+      const draftText = thread
+        .map((t, i) => (thread.length > 1 ? `${i + 1}. ${t.text}` : t.text))
+        .join('\n\n');
+      const prompt = `/cc-x-jam\n\nDraft (id: ${draft.id}) — also saved to jam/active.json:\n${draftText}`;
+
+      // Server runs on the Mac, so pbcopy targets the same clipboard the CC
+      // session pastes from. Also bring Terminal forward — jam is one paste away.
+      try {
+        const pb = spawn('pbcopy');
+        pb.stdin.end(prompt);
+        spawn('open', ['-a', 'Terminal']);
+      } catch (e) {
+        console.error('jam clipboard/terminal failed:', e.message);
+      }
+
+      return send(res, 200, { ok: true, prompt, message: 'Copied /cc-x-jam prompt — paste in Terminal' });
     }
 
     // ── 404 ──────────────────────────────────────────────
