@@ -1128,6 +1128,7 @@
     }
 
     updateButtons();
+    autosaveComposer();
   }
 
   function updateButtons() {
@@ -1176,6 +1177,7 @@
       cardImages.set(id, [...(cardImages.get(id) || []), ...newImgs]);
       renderImageStrip(id);
       updateButtons();
+      autosaveComposer();
     });
   }
 
@@ -1190,6 +1192,7 @@
     cardImages.set(cardId, imgs);
     renderImageStrip(cardId);
     updateButtons();
+    autosaveComposer();
   }
 
   function renderImageStrip(cardId) {
@@ -1220,7 +1223,70 @@
     cardImages.clear();
     cardSeq = 0;
     currentEditDraftId = null;
+    try { localStorage.removeItem(AUTOSAVE_KEY); } catch {}
     addCard();
+  }
+
+  // ── composer autosave ───────────────────────────────────
+  // Persist-first: typed text AND attached images are written to localStorage
+  // on every change and restored on load, so a reload / crash / accidental
+  // close can never lose composer input. Cleared only on a successful post.
+  const AUTOSAVE_KEY = 'xvp_composer_autosave_v1';
+  let _autosaveTimer = null;
+
+  function snapshotComposer() {
+    const cards = Array.from(document.querySelectorAll('.tweet-card')).map(c => {
+      const id = +c.dataset.id;
+      return {
+        text: c.querySelector('textarea').value,
+        images: (cardImages.get(id) || []).map(({data, mimeType, name, preview}) => ({data, mimeType, name, preview})),
+      };
+    });
+    return { cards, draftId: currentEditDraftId };
+  }
+
+  function autosaveComposer() {
+    clearTimeout(_autosaveTimer);
+    _autosaveTimer = setTimeout(() => {
+      const snap = snapshotComposer();
+      const hasContent = snap.cards.some(c => c.text.trim() || c.images.length);
+      try {
+        if (hasContent) localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(snap));
+        else localStorage.removeItem(AUTOSAVE_KEY);
+      } catch (e) {
+        // Quota (usually oversized images). NEVER silently drop — salvage the
+        // text and warn loudly so nothing typed is lost on reload.
+        try {
+          localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(
+            { draftId: snap.draftId, cards: snap.cards.map(c => ({ text: c.text, images: [] })) }));
+        } catch {}
+        toast('⚠︎ images too large to auto-cache — don’t reload before posting', true);
+      }
+    }, 400);
+  }
+
+  function restoreComposer() {
+    let snap = null;
+    try { snap = JSON.parse(localStorage.getItem(AUTOSAVE_KEY) || 'null'); } catch { snap = null; }
+    if (!snap || !Array.isArray(snap.cards)) return false;
+    const hasContent = snap.cards.some(c => (c.text || '').trim() || (c.images || []).length);
+    if (!hasContent) return false;
+
+    document.getElementById('threadContainer').innerHTML = '';
+    cardImages.clear();
+    cardSeq = 0;
+    currentEditDraftId = snap.draftId || null;
+    snap.cards.forEach(cd => {
+      const id = addCard(cd.text || '');
+      if (cd.images && cd.images.length) {
+        cardImages.set(id, cd.images);
+        renderImageStrip(id);
+      }
+    });
+    updateButtons();
+    const imgCount = snap.cards.reduce((n, c) => n + (c.images ? c.images.length : 0), 0);
+    toast(`Restored unsaved draft${imgCount ? ` + ${imgCount} image${imgCount > 1 ? 's' : ''}` : ''}`);
+    return true;
   }
 
   // ── post handler ───────────────────────────────────────
@@ -1856,7 +1922,7 @@
 
   // ── init ───────────────────────────────────────────────
 
-  addCard();
+  if (!restoreComposer()) addCard();
   checkVPS();
   loadDrafts();
   setInterval(checkVPS, 30000);
