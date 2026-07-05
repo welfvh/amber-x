@@ -320,9 +320,11 @@ def post(req: PostRequest):
     """Post a tweet or thread immediately. Includes duplicate protection."""
     if not req.tweets:
         raise HTTPException(400, "No tweets provided")
+    # @_welf is Premium — long posts allowed up to 25k chars. Guard the API
+    # ceiling only, not the legacy 280 limit.
     for t in req.tweets:
-        if len(t.text or "") > 280:
-            raise HTTPException(400, f"Tweet over 280 characters: {len(t.text)}")
+        if len(t.text or "") > 25000:
+            raise HTTPException(400, f"Tweet over 25000 characters: {len(t.text)}")
 
     # Content-based dedup key
     content_key = "||".join(t.text or "" for t in req.tweets)
