@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync, createR
 import { resolve, dirname, extname, join, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync, spawn } from 'child_process';
-import { randomUUID } from 'crypto';
+import { randomUUID, timingSafeEqual } from 'crypto';
 import Database from 'better-sqlite3';
 
 const PORT = parseInt(process.env.PORT || '3131', 10);
@@ -28,13 +28,21 @@ const ASSETS_DIR = resolve(DATA_DIR, 'media/assets');
 const JAM_DIR = resolve(DATA_DIR, 'jam');
 const DB_PATH = resolve(DATA_DIR, 'data.db');
 
-// Auth token for VPS x-vibepoastry service — read from Keychain at startup
-let VPS_AUTH_TOKEN = '';
-try {
-  VPS_AUTH_TOKEN = execSync('security find-generic-password -s "cc/x-vibepoastry" -a "auth_token" -w', { encoding: 'utf8' }).trim();
-} catch {
-  console.error('WARNING: cc/x-vibepoastry auth token not found in Keychain');
+// Auth token for VPS x-vibepoastry service — env first (VPS deploy), then Mac Keychain
+let VPS_AUTH_TOKEN = process.env.XVP_AUTH_TOKEN || '';
+if (!VPS_AUTH_TOKEN) {
+  try {
+    VPS_AUTH_TOKEN = execSync('security find-generic-password -s "cc/x-vibepoastry" -a "auth_token" -w', { encoding: 'utf8' }).trim();
+  } catch {
+    console.error('WARNING: cc/x-vibepoastry auth token not found in Keychain or XVP_AUTH_TOKEN env');
+  }
 }
+
+// ── UI auth gate (public deploys only) ──────────────────────
+// Active when XVP_UI_PASSWORD is set (x.welf.ai). Local Mac runs skip it.
+const UI_PASSWORD = process.env.XVP_UI_PASSWORD || '';
+const authFails = new Map(); // ip → { count, resetAt }
+const AUTH_MAX_FAILS = 10, AUTH_WINDOW_MS = 15 * 60 * 1000;
 
 // ── ensure directories ──────────────────────────────────────
 
@@ -301,6 +309,60 @@ const MIME_TYPES = {
 // In-flight dedup for raw (non-draft) posts
 const postInFlight = new Set();
 
+// ── UI auth gate helpers ────────────────────────────────────
+
+db.exec(`CREATE TABLE IF NOT EXISTS ui_sessions (
+  token TEXT PRIMARY KEY,
+  created_at TEXT DEFAULT (datetime('now'))
+)`);
+const sessStmts = {
+  get: db.prepare('SELECT token FROM ui_sessions WHERE token = ?'),
+  put: db.prepare('INSERT INTO ui_sessions (token) VALUES (?)'),
+  del: db.prepare('DELETE FROM ui_sessions WHERE token = ?'),
+};
+
+function clientIp(req) {
+  return (req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown')
+    .toString().split(',')[0].trim();
+}
+
+function isAuthed(req) {
+  const cookie = req.headers.cookie || '';
+  const m = cookie.match(/(?:^|;\s*)xvp_session=([a-f0-9-]+)/);
+  return !!(m && sessStmts.get.get(m[1]));
+}
+
+function passwordMatches(submitted) {
+  const a = Buffer.from(submitted || '');
+  const b = Buffer.from(UI_PASSWORD);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+const LOGIN_HTML = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex,nofollow">
+<title>x.welf.ai — sign in</title><style>
+*{margin:0;padding:0;box-sizing:border-box}html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;background:#f7f9f9;color:#0f1419;display:grid;place-items:center;padding:1rem}
+@media (prefers-color-scheme:dark){body{background:#000;color:#e7e9ea}.card{background:#000!important;border:1px solid #2f3336}}
+.card{background:#fff;border-radius:16px;padding:2rem;width:100%;max-width:360px;box-shadow:0 1px 3px rgba(0,0,0,.04),0 8px 32px rgba(0,0,0,.04)}
+h1{font-size:1.25rem;font-weight:700;margin-bottom:.25rem}.sub{font-size:.875rem;color:#536471;margin-bottom:1.5rem}
+input{width:100%;padding:.75rem 1rem;font-size:1rem;border:1px solid #cfd9de;border-radius:8px;margin-bottom:1rem;background:transparent;color:inherit}
+input:focus{outline:2px solid #1d9bf0;border-color:transparent}
+button{width:100%;padding:.75rem;font-size:1rem;font-weight:700;color:#fff;background:#0f1419;border:none;border-radius:9999px;cursor:pointer}
+@media (prefers-color-scheme:dark){button{background:#eff3f4;color:#0f1419}}
+.err{color:#f4212e;font-size:.875rem;margin-bottom:1rem;display:none}</style></head><body>
+<div class="card"><h1>𝕏 x.welf.ai</h1><div class="sub">Content studio — sign in</div>
+<div class="err" id="err">Wrong password</div>
+<form id="f"><input type="password" id="pw" placeholder="Password" autofocus autocomplete="current-password">
+<button type="submit">Sign in</button></form></div>
+<script>
+document.getElementById('f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const r = await fetch('/login', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:document.getElementById('pw').value})});
+  if (r.ok) location.href = '/'; else document.getElementById('err').style.display = 'block';
+});
+</script></body></html>`;
+
 // ── routes ──────────────────────────────────────────────────
 
 const server = http.createServer(async (req, res) => {
@@ -309,6 +371,56 @@ const server = http.createServer(async (req, res) => {
   const { path, params } = parseRoute(req.url);
 
   try {
+    // ── auth gate (only when XVP_UI_PASSWORD is set) ──────
+    if (UI_PASSWORD) {
+      if (path === '/login' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(LOGIN_HTML);
+        return;
+      }
+      if (path === '/login' && req.method === 'POST') {
+        const ip = clientIp(req);
+        const fails = authFails.get(ip);
+        if (fails && fails.count >= AUTH_MAX_FAILS && Date.now() < fails.resetAt) {
+          return send(res, 429, { error: 'too_many_attempts' });
+        }
+        const body = await readBody(req);
+        await new Promise(r => setTimeout(r, 250)); // slow brute force
+        if (!passwordMatches(body.password)) {
+          const f = authFails.get(ip) || { count: 0, resetAt: Date.now() + AUTH_WINDOW_MS };
+          f.count += 1; if (Date.now() > f.resetAt) { f.count = 1; f.resetAt = Date.now() + AUTH_WINDOW_MS; }
+          authFails.set(ip, f);
+          return send(res, 401, { error: 'invalid_credentials' });
+        }
+        authFails.delete(ip);
+        const token = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
+        sessStmts.put.run(token);
+        cors(res);
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Set-Cookie': `xvp_session=${token}; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000; Path=/`,
+        });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      if (path === '/logout' && req.method === 'POST') {
+        const m = (req.headers.cookie || '').match(/(?:^|;\s*)xvp_session=([a-f0-9-]+)/);
+        if (m) sessStmts.del.run(m[1]);
+        cors(res);
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Set-Cookie': 'xvp_session=; Max-Age=0; Path=/' });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      if (!isAuthed(req)) {
+        if (req.method === 'GET' && (path === '/' || path === '/index.html')) {
+          res.writeHead(302, { Location: '/login' });
+          res.end();
+          return;
+        }
+        return send(res, 401, { error: 'unauthorized' });
+      }
+    }
+
     // ── static files ──────────────────────────────────────
     if (req.method === 'GET' && (path === '/' || path === '/index.html')) {
       cors(res);
@@ -501,7 +613,12 @@ const server = http.createServer(async (req, res) => {
             }
           }
 
-          vpsPayload.push({ text: t.text || ' ', media_paths: mediaPaths.length ? mediaPaths : null });
+          vpsPayload.push({
+            text: t.text || ' ',
+            media_paths: mediaPaths.length ? mediaPaths : null,
+            in_reply_to_tweet_id: i === 0 ? (t.in_reply_to_tweet_id || body.in_reply_to_tweet_id || null) : null,
+            quote_tweet_id: i === 0 ? (t.quote_tweet_id || body.quote_tweet_id || null) : null,
+          });
         }
 
         const result = await vpsRequest('POST', '/post', { tweets: vpsPayload });
@@ -509,6 +626,10 @@ const server = http.createServer(async (req, res) => {
         if (draftId) {
           stmts.updateDraftPosted.run(new Date().toISOString(), result.url, draftId);
         }
+
+        // The freshly posted tweet must show up on next feed visit — drop the
+        // mine cache so the next load fetches live.
+        db.prepare("DELETE FROM feed_cache WHERE feed_key = 'mine'").run();
 
         return send(res, 200, { ok: true, url: result.url, id: result.id });
       } catch (postErr) {
@@ -550,6 +671,20 @@ const server = http.createServer(async (req, res) => {
     const queueDelMatch = path.match(/^\/queue\/([a-z0-9]+)$/);
     if (req.method === 'DELETE' && queueDelMatch) {
       const data = await vpsRequest('DELETE', `/queue/${queueDelMatch[1]}`);
+      return send(res, 200, data);
+    }
+
+    // POST/DELETE /tweet/:id/like — like / unlike
+    const likeMatch = path.match(/^\/tweet\/(\d+)\/like$/);
+    if (likeMatch && (req.method === 'POST' || req.method === 'DELETE')) {
+      const data = await vpsRequest(req.method, `/tweet/${likeMatch[1]}/like`);
+      return send(res, 200, data);
+    }
+
+    // POST/DELETE /tweet/:id/retweet — repost / undo repost
+    const rtMatch = path.match(/^\/tweet\/(\d+)\/retweet$/);
+    if (rtMatch && (req.method === 'POST' || req.method === 'DELETE')) {
+      const data = await vpsRequest(req.method, `/tweet/${rtMatch[1]}/retweet`);
       return send(res, 200, data);
     }
 
@@ -823,6 +958,7 @@ const server = http.createServer(async (req, res) => {
       // Server runs on the Mac, so pbcopy targets the same clipboard the CC
       // session pastes from. Also bring Terminal forward — jam is one paste away.
       try {
+        if (process.platform !== 'darwin') throw new Error('clipboard/Terminal only on Mac — browser fallback handles it');
         const pb = spawn('pbcopy');
         pb.stdin.end(prompt);
         spawn('open', ['-a', 'Terminal']);

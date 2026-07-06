@@ -215,6 +215,7 @@ class TweetPayload(BaseModel):
     text: str
     media_paths: Optional[list[str]] = None
     quote_tweet_id: Optional[str] = None  # for quote-retweet via tws sprout flow
+    in_reply_to_tweet_id: Optional[str] = None  # reply to an existing tweet (first tweet of thread)
 
 class PostRequest(BaseModel):
     tweets: list[TweetPayload]
@@ -247,6 +248,8 @@ def post_tweets(tweets: list[TweetPayload]) -> dict:
             kwargs["media_ids"] = media_ids
         if previous_id:
             kwargs["in_reply_to_tweet_id"] = previous_id
+        elif tweet.in_reply_to_tweet_id:
+            kwargs["in_reply_to_tweet_id"] = tweet.in_reply_to_tweet_id
         if tweet.quote_tweet_id:
             kwargs["quote_tweet_id"] = tweet.quote_tweet_id
 
@@ -342,6 +345,50 @@ def post(req: PostRequest):
     finally:
         with _post_lock:
             _posts_in_flight.discard(content_key)
+
+
+@app.post("/tweet/{tweet_id}/like")
+def like_tweet(tweet_id: str):
+    """Like a tweet as @_welf."""
+    try:
+        get_v2_client().like(tweet_id, user_auth=True)
+        return {"ok": True}
+    except Exception as e:
+        log.error(f"Like failed for {tweet_id}: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.delete("/tweet/{tweet_id}/like")
+def unlike_tweet(tweet_id: str):
+    """Remove a like."""
+    try:
+        get_v2_client().unlike(tweet_id, user_auth=True)
+        return {"ok": True}
+    except Exception as e:
+        log.error(f"Unlike failed for {tweet_id}: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.post("/tweet/{tweet_id}/retweet")
+def retweet_tweet(tweet_id: str):
+    """Repost a tweet as @_welf."""
+    try:
+        get_v2_client().retweet(tweet_id, user_auth=True)
+        return {"ok": True}
+    except Exception as e:
+        log.error(f"Retweet failed for {tweet_id}: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.delete("/tweet/{tweet_id}/retweet")
+def unretweet_tweet(tweet_id: str):
+    """Undo a repost."""
+    try:
+        get_v2_client().unretweet(tweet_id, user_auth=True)
+        return {"ok": True}
+    except Exception as e:
+        log.error(f"Unretweet failed for {tweet_id}: {e}")
+        raise HTTPException(500, str(e))
 
 
 @app.delete("/tweet/{tweet_id}")
@@ -449,6 +496,20 @@ def _tweet_media(tweet, media_idx):
     return [media_idx[k] for k in keys if k in media_idx]
 
 
+def _tweet_urls(tweet):
+    """URL entities for a tweet: t.co → expanded/display, for clickable links."""
+    ents = getattr(tweet, "entities", None) or {}
+    out = []
+    for u in ents.get("urls", []) or []:
+        out.append({
+            "url": u.get("url"),
+            "expanded_url": u.get("expanded_url"),
+            "display_url": u.get("display_url"),
+            "media_key": u.get("media_key"),  # set when the t.co is an attached-media link
+        })
+    return out
+
+
 # X API v2 fields needed to surface attached photos/video thumbnails in feeds.
 MEDIA_EXPANSIONS = ["attachments.media_keys"]
 MEDIA_FIELDS = ["url", "preview_image_url", "type", "alt_text"]
@@ -459,20 +520,25 @@ def tweets(count: int = 20):
     """Get recent own tweets with public_metrics + attached media."""
     try:
         client = get_v2_client()
-        me = client.get_me()
+        me = client.get_me(user_fields=["profile_image_url", "name"], user_auth=True)
         user_id = me.data.id
+        profile = {
+            "username": me.data.username,
+            "name": getattr(me.data, "name", None) or me.data.username,
+            "avatar": getattr(me.data, "profile_image_url", None),
+        }
 
         response = client.get_users_tweets(
             user_id,
             max_results=min(count, 100),
-            tweet_fields=["created_at", "public_metrics", "conversation_id", "attachments"],
+            tweet_fields=["created_at", "public_metrics", "conversation_id", "attachments", "entities"],
             expansions=MEDIA_EXPANSIONS,
             media_fields=MEDIA_FIELDS,
             exclude=["retweets"],
         )
 
         if not response.data:
-            return {"tweets": [], "username": me.data.username}
+            return {"tweets": [], "username": me.data.username, "profile": profile}
 
         media_idx = _media_index(response)
         tweets_list = []
@@ -483,6 +549,7 @@ def tweets(count: int = 20):
                 "text": tweet.text,
                 "created_at": tweet.created_at.isoformat() if tweet.created_at else None,
                 "media": _tweet_media(tweet, media_idx),
+                "urls": _tweet_urls(tweet),
                 "metrics": {
                     "likes": pm.get("like_count", 0),
                     "retweets": pm.get("retweet_count", 0),
@@ -492,7 +559,7 @@ def tweets(count: int = 20):
                 },
             })
 
-        return {"tweets": tweets_list, "username": me.data.username}
+        return {"tweets": tweets_list, "username": me.data.username, "profile": profile}
     except Exception as e:
         log.error(f"Tweets fetch failed: {e}")
         raise HTTPException(500, str(e))
@@ -585,8 +652,10 @@ def activity(count: int = 20):
         response = client.get_users_mentions(
             user_id,
             max_results=min(count, 100),
-            tweet_fields=["created_at", "public_metrics", "author_id", "in_reply_to_user_id"],
-            expansions=["author_id"],
+            tweet_fields=["created_at", "public_metrics", "author_id", "in_reply_to_user_id", "attachments", "entities"],
+            expansions=["author_id"] + MEDIA_EXPANSIONS,
+            user_fields=["username", "name", "profile_image_url"],
+            media_fields=MEDIA_FIELDS,
         )
 
         if not response.data:
@@ -596,17 +665,27 @@ def activity(count: int = 20):
         authors = {}
         if response.includes and "users" in response.includes:
             for user in response.includes["users"]:
-                authors[user.id] = user.username
+                authors[user.id] = {
+                    "username": user.username,
+                    "name": user.name,
+                    "avatar": getattr(user, "profile_image_url", None),
+                }
 
+        media_idx = _media_index(response)
         mentions = []
         for tweet in response.data:
             pm = tweet.public_metrics or {}
+            author = authors.get(tweet.author_id, {})
             mentions.append({
                 "id": tweet.id,
                 "text": tweet.text,
                 "author_id": tweet.author_id,
-                "author_username": authors.get(tweet.author_id, "unknown"),
+                "author_username": author.get("username", "unknown"),
+                "author_name": author.get("name", ""),
+                "author_image": author.get("avatar"),
                 "created_at": tweet.created_at.isoformat() if tweet.created_at else None,
+                "media": _tweet_media(tweet, media_idx),
+                "urls": _tweet_urls(tweet),
                 "metrics": {
                     "likes": pm.get("like_count", 0),
                     "retweets": pm.get("retweet_count", 0),
@@ -628,7 +707,7 @@ def search(q: str, count: int = 25):
         response = client.search_recent_tweets(
             q,
             max_results=max(10, min(count, 100)),
-            tweet_fields=["created_at", "public_metrics", "author_id", "attachments"],
+            tweet_fields=["created_at", "public_metrics", "author_id", "attachments", "entities"],
             expansions=["author_id"] + MEDIA_EXPANSIONS,
             user_fields=["username", "name", "profile_image_url"],
             media_fields=MEDIA_FIELDS,
@@ -660,6 +739,7 @@ def search(q: str, count: int = 25):
                 "author_image": author.get("profile_image_url"),
                 "created_at": tweet.created_at.isoformat() if tweet.created_at else None,
                 "media": _tweet_media(tweet, media_idx),
+                "urls": _tweet_urls(tweet),
                 "metrics": {
                     "likes": pm.get("like_count", 0),
                     "retweets": pm.get("retweet_count", 0),
