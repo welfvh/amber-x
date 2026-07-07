@@ -192,6 +192,12 @@
       gap: 12px;
       padding: 14px 16px 0;
     }
+    .tweet-card.drag-over {
+      outline: 2px dashed var(--accent);
+      outline-offset: -4px;
+      border-radius: 12px;
+      background: rgba(29,155,240,0.06);
+    }
 
     .card-left {
       display: flex;
@@ -533,7 +539,135 @@
     .stat-value { font-size: 20px; font-weight: 800; }
     .stat-label { font-size: 12px; color: var(--text-2); font-weight: 500; }
 
+    /* ── X-exact tweet cards ───────────────── */
+    .feed-stream {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+    /* inside the feed tab the stream connects to the tab bar above */
+    #feedList .feed-stream { border-radius: 0 0 16px 16px; }
+    #feedCacheNote:empty { padding: 0; }
+
     .tweet-item {
+      display: flex;
+      gap: 12px;
+      padding: 12px 16px;
+      background: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      transition: background .15s;
+    }
+    .tweet-item:last-child { border-bottom: none; }
+    .tweet-item:hover { background: var(--hover); }
+
+    .tw-avatar {
+      width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
+      background: var(--accent); color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 16px; object-fit: cover; user-select: none;
+    }
+    img.tw-avatar { background: var(--hover); }
+
+    .tw-main { flex: 1; min-width: 0; }
+
+    .tw-head {
+      display: flex; align-items: center; gap: 4px;
+      font-size: 15px; line-height: 20px;
+      white-space: nowrap; overflow: hidden;
+    }
+    .tw-name { font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; }
+    .tw-handle, .tw-dot { color: var(--text-2); font-weight: 400; }
+    a.tw-time { color: var(--text-2); font-weight: 400; text-decoration: none; }
+    a.tw-time:hover { text-decoration: underline; }
+
+    .tweet-text {
+      font-size: 15px;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin-top: 2px;
+      color: var(--text);
+    }
+    .tweet-text a { color: var(--accent); text-decoration: none; }
+    .tweet-text a:hover { text-decoration: underline; }
+
+    .tweet-media {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 2px;
+      margin-top: 12px;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .tweet-media.single { grid-template-columns: 1fr; }
+    .tweet-media img {
+      width: 100%;
+      max-height: 510px;
+      object-fit: cover;
+      background: var(--hover);
+      display: block;
+    }
+
+    /* action row — reply / repost / like / views, X hover tints */
+    .tw-actions {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-top: 6px; margin-left: -8px; max-width: 425px;
+    }
+    .tw-act {
+      display: flex; align-items: center; gap: 2px;
+      background: none; border: none; padding: 0;
+      color: var(--text-2); font-size: 13px; font-family: inherit;
+      cursor: pointer; text-decoration: none; transition: color .15s;
+    }
+    .tw-act .ico {
+      width: 34px; height: 34px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      transition: background .15s;
+    }
+    .tw-act svg { width: 18px; height: 18px; fill: currentColor; }
+    .tw-act.reply:hover { color: var(--accent); }
+    .tw-act.reply:hover .ico { background: rgba(29,155,240,.1); }
+    .tw-act.rt:hover { color: var(--success); }
+    .tw-act.rt:hover .ico { background: rgba(0,186,124,.1); }
+    .tw-act.rt.on { color: var(--success); }
+    .tw-act.like:hover { color: #f91880; }
+    .tw-act.like:hover .ico { background: rgba(249,24,128,.1); }
+    .tw-act.like.on { color: #f91880; }
+    .tw-act.views:hover { color: var(--accent); }
+    .tw-act.views:hover .ico { background: rgba(29,155,240,.1); }
+
+    /* repost dropdown (Repost / Quote) */
+    .rt-menu {
+      position: fixed; z-index: 300; min-width: 160px;
+      background: var(--bg-card); border-radius: 12px; overflow: hidden;
+      box-shadow: 0 0 15px rgba(101,119,134,.2), 0 0 3px 1px rgba(101,119,134,.15);
+    }
+    .rt-menu button {
+      display: flex; gap: 10px; align-items: center; width: 100%;
+      background: none; border: none; padding: 12px 16px;
+      font-size: 15px; font-weight: 700; color: var(--text);
+      cursor: pointer; font-family: inherit;
+    }
+    .rt-menu button:hover { background: var(--hover); }
+    .rt-menu svg { width: 18px; height: 18px; fill: currentColor; flex-shrink: 0; }
+
+    /* reply/quote context chip above composer */
+    .ctx-chip {
+      display: flex; align-items: center; gap: 8px;
+      margin: 12px 16px 0; padding: 10px 12px;
+      border: 1px solid var(--border); border-radius: 12px;
+      font-size: 13px; color: var(--text-2);
+    }
+    .ctx-chip .ctx-label { font-weight: 700; color: var(--accent); white-space: nowrap; }
+    .ctx-chip .ctx-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .ctx-chip .ctx-text a { color: var(--text-2); }
+    .ctx-chip button { background: none; border: none; color: var(--text-2); cursor: pointer; font-size: 15px; line-height: 1; }
+    .ctx-chip button:hover { color: var(--danger); }
+
+    /* non-tweet boxy cards (AI suggestions etc.) */
+    .plain-card {
       padding: 14px 16px;
       background: var(--bg-card);
       border: 1px solid var(--border);
@@ -541,22 +675,6 @@
       margin-bottom: 8px;
     }
 
-    .tweet-text {
-      font-size: 15px;
-      line-height: 1.5;
-      white-space: pre-wrap;
-      word-break: break-word;
-      margin-bottom: 8px;
-    }
-
-    .tweet-metrics {
-      display: flex;
-      gap: 16px;
-      color: var(--text-2);
-      font-size: 13px;
-    }
-
-    .tweet-metrics span { display: flex; align-items: center; gap: 4px; }
     .tweet-date { font-size: 12px; color: var(--text-3); margin-top: 6px; }
 
     /* ── schedule tab ─────────────────────── */
@@ -723,6 +841,86 @@
     }
     .toast.show { transform: translateX(-50%) translateY(0); }
     .toast.err  { background: var(--danger); }
+    /* ── multi-feed sub-tabs — X tab bar ─────────────── */
+    .feed-subtabs {
+      display: flex; align-items: stretch;
+      border: 1px solid var(--border); border-bottom: none;
+      border-radius: 16px 16px 0 0; overflow: hidden;
+      background: var(--bg-card);
+    }
+    .feed-subtabs + .feed-cache-note { border-left: 1px solid var(--border); border-right: 1px solid var(--border); margin: 0; padding: 6px 16px; background: var(--bg-card); }
+    .subtab {
+      flex: 1; padding: 14px 4px; position: relative;
+      font-size: 14px; font-weight: 600; font-family: inherit;
+      color: var(--text-2); background: transparent; border: none;
+      cursor: pointer; transition: background .15s; white-space: nowrap;
+    }
+    .subtab:hover { background: var(--hover); }
+    .subtab.active { color: var(--text); font-weight: 700; }
+    .subtab.active::after {
+      content: ''; position: absolute; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 48px; height: 4px; border-radius: 9999px; background: var(--accent);
+    }
+    .feed-refresh {
+      padding: 0 16px; font-size: 15px;
+      color: var(--text-3); background: transparent; border: none; cursor: pointer;
+    }
+    .feed-refresh:hover { color: var(--text); background: var(--hover); }
+    .feed-cache-note { font-size: 11px; color: var(--text-3); margin: -8px 0 12px; }
+
+    /* mentions / replies-to-do (wrapper around a tweet-item) */
+    .mention-card { position: relative; border-bottom: 1px solid var(--border); }
+    .mention-card:last-child { border-bottom: none; }
+    .mention-card .tweet-item { border-bottom: none; }
+    .mention-card.done { opacity: .45; }
+    .mention-author { font-weight: 700; font-size: 14px; color: var(--text); }
+    .mention-actions { display: flex; gap: 10px; margin-top: 8px; align-items: center; }
+    .mention-actions a { color: var(--accent); font-size: 13px; text-decoration: none; }
+    .done-toggle {
+      font-size: 12px; color: var(--text-3); background: transparent;
+      border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; cursor: pointer;
+    }
+    .done-toggle:hover { color: var(--success); border-color: var(--success); }
+
+    /* are.na blocks */
+    .arena-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+    .arena-card {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+      overflow: hidden; display: flex; flex-direction: column;
+    }
+    .arena-card img { width: 100%; aspect-ratio: 4/3; object-fit: cover; background: var(--hover); }
+    .arena-card-body { padding: 10px 12px; font-size: 13px; color: var(--text); }
+    .arena-card-meta { padding: 0 12px 10px; font-size: 11px; color: var(--text-3); }
+    .arena-card a { color: inherit; text-decoration: none; }
+
+    /* topical keyword chips + editor */
+    .kw-chip {
+      display: inline-block; font-size: 11px; color: var(--accent);
+      border: 1px solid var(--accent); border-radius: 999px; padding: 1px 8px; margin-top: 6px;
+    }
+    .kw-editor { margin-bottom: 14px; }
+    .kw-editor textarea {
+      width: 100%; min-height: 100px; background: var(--bg-card); color: var(--text);
+      border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
+      font-size: 14px; font-family: inherit; resize: vertical;
+    }
+
+    /* AI suggestions */
+    .suggestion-card { border-left: 3px solid var(--accent); }
+    .suggestion-actions { display: flex; gap: 8px; margin-top: 10px; }
+
+    /* analytics */
+    .analytics-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px; margin-bottom: 16px;
+    }
+    .metric-card {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+      padding: 12px 14px;
+    }
+    .metric-card .m-label { font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: .4px; }
+    .metric-card .m-value { font-size: 20px; font-weight: 800; color: var(--text); margin-top: 2px; }
+    .metric-card .m-sub { font-size: 11px; color: var(--text-2); margin-top: 2px; }
   </style>
 </head>
 <body>
@@ -789,14 +987,32 @@
     </div>
   </div>
 
-  <!-- ── FEED TAB ─────────────────────────── -->
+  <!-- ── FEED TAB (multi-feed system) ─────── -->
   <div class="tab-content" id="tab-feed">
-    <div class="feed-header">My Feed</div>
+    <div class="feed-header">Feeds</div>
     <div class="stats-bar" id="statsBar">
       <div class="stat-item"><span class="stat-value" id="statFollowers">—</span><span class="stat-label">Followers</span></div>
       <div class="stat-item"><span class="stat-value" id="statTweets">—</span><span class="stat-label">Tweets</span></div>
       <div class="stat-item"><span class="stat-value" id="statLikes">—</span><span class="stat-label">Recent Likes</span></div>
       <div class="stat-item"><span class="stat-value" id="statImpressions">—</span><span class="stat-label">Recent Impressions</span></div>
+    </div>
+    <div class="feed-subtabs" id="feedSubtabs">
+      <button class="subtab active" data-feed="top" onclick="switchFeed('top')">Top</button>
+      <button class="subtab" data-feed="recent" onclick="switchFeed('recent')">Recent</button>
+      <button class="subtab" data-feed="replies" onclick="switchFeed('replies')">Replies</button>
+      <button class="subtab" data-feed="arena" onclick="switchFeed('arena')">Are.na</button>
+      <button class="subtab" data-feed="topical" onclick="switchFeed('topical')">Topical</button>
+      <button class="subtab" data-feed="suggestions" onclick="switchFeed('suggestions')">AI Drafts</button>
+      <button class="subtab" data-feed="analytics" onclick="switchFeed('analytics')">Analytics</button>
+      <button class="feed-refresh" onclick="refreshCurrentFeed()" title="Force live refresh (uses API credits)">↻</button>
+    </div>
+    <div class="feed-cache-note" id="feedCacheNote"></div>
+    <div class="kw-editor" id="kwEditor" style="display:none;">
+      <textarea id="kwTextarea" placeholder="One keyword per line — drives the Topical feed"></textarea>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <button class="btn btn-primary" style="font-size:13px; padding:6px 14px;" onclick="saveKeywords()">Save keywords</button>
+        <button class="btn btn-outline" style="font-size:13px; padding:6px 14px;" onclick="toggleKwEditor(false)">Cancel</button>
+      </div>
     </div>
     <div id="feedList"></div>
   </div>
@@ -836,8 +1052,9 @@
 <div class="toast" id="toast"></div>
 
 <script>
-  const API = 'http://localhost:3131';
-  const MAX = 280;
+  // Same-origin API (works on any port/host: dev :3132, prod :3131, Daylight/mobile via LAN IP)
+  const API = location.origin.startsWith('http') ? location.origin : 'http://localhost:3131';
+  const MAX = 25000;  // Premium long-post limit — 280 is obsolete for @_welf
   const CIRC = 2 * Math.PI * 9;
   let cardSeq = 0;
   const cardImages = new Map();
@@ -875,6 +1092,8 @@
   function switchTab(name) {
     document.querySelectorAll('.sidebar-tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
     document.querySelectorAll('.tab-content').forEach(el => el.classList.toggle('active', el.id === `tab-${name}`));
+    // Refresh must keep you where you are — the tab lives in the URL hash.
+    history.replaceState(null, '', name === 'feed' ? `#feed/${currentFeed}` : `#${name}`);
     if (name === 'feed') loadFeed();
     if (name === 'schedule') loadQueue();
     if (name === 'assets') loadAssets();
@@ -939,6 +1158,31 @@
     const ta = card.querySelector('textarea');
     ta.addEventListener('input', () => autoResize(ta));
     autoResize(ta);
+
+    // Drag & drop image files onto the card
+    ['dragenter', 'dragover'].forEach(ev => card.addEventListener(ev, e => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types).includes('Files')) {
+        e.preventDefault();
+        card.classList.add('drag-over');
+      }
+    }));
+    ['dragleave', 'dragend', 'drop'].forEach(ev => card.addEventListener(ev, e => {
+      if (ev !== 'dragleave' || e.target === card) card.classList.remove('drag-over');
+    }));
+    card.addEventListener('drop', e => {
+      const files = e.dataTransfer?.files;
+      if (files && files.length) { e.preventDefault(); addFilesToCard(id, files); }
+    });
+
+    // Paste image from clipboard into the textarea
+    ta.addEventListener('paste', e => {
+      const imgs = Array.from(e.clipboardData?.items || [])
+        .filter(it => it.kind === 'file' && it.type.startsWith('image/'))
+        .map(it => it.getAsFile())
+        .filter(Boolean);
+      if (imgs.length) { e.preventDefault(); addFilesToCard(id, imgs); }
+    });
+
     setTimeout(() => ta.focus(), 0);
     onInput(id);
     return id;
@@ -990,6 +1234,7 @@
     }
 
     updateButtons();
+    autosaveComposer();
   }
 
   function updateButtons() {
@@ -1018,26 +1263,32 @@
     document.getElementById(`file-${id}`).click();
   }
 
-  function onFilesChosen(id, input) {
-    const existing = cardImages.get(id) || [];
-    const slots = 4 - existing.length;
-    const files = Array.from(input.files).slice(0, slots);
+  // Shared entry point for the file picker, drag-drop, and paste.
+  function addFilesToCard(id, fileList) {
+    const slots = 4 - (cardImages.get(id) || []).length;
+    if (slots <= 0) { toast('Max 4 images per tweet', true); return; }
+    const files = Array.from(fileList).filter(f => f.type.startsWith('image/')).slice(0, slots);
+    if (!files.length) return;
 
     Promise.all(files.map(file => new Promise(resolve => {
       const reader = new FileReader();
       reader.onload = e => resolve({
         data: e.target.result.split(',')[1],
         mimeType: file.type,
-        name: file.name,
+        name: file.name || 'pasted.png',
         preview: e.target.result,
       });
       reader.readAsDataURL(file);
     }))).then(newImgs => {
-      cardImages.set(id, [...existing, ...newImgs]);
+      cardImages.set(id, [...(cardImages.get(id) || []), ...newImgs]);
       renderImageStrip(id);
       updateButtons();
+      autosaveComposer();
     });
+  }
 
+  function onFilesChosen(id, input) {
+    addFilesToCard(id, input.files);
     input.value = '';
   }
 
@@ -1047,6 +1298,7 @@
     cardImages.set(cardId, imgs);
     renderImageStrip(cardId);
     updateButtons();
+    autosaveComposer();
   }
 
   function renderImageStrip(cardId) {
@@ -1077,7 +1329,109 @@
     cardImages.clear();
     cardSeq = 0;
     currentEditDraftId = null;
+    composeCtx = null;
+    renderComposeCtx();
+    try { localStorage.removeItem(AUTOSAVE_KEY); } catch {}
     addCard();
+  }
+
+  // ── reply / quote compose context ────────────────────────
+
+  let composeCtx = null; // { type: 'reply'|'quote', id, username }
+
+  function setComposeCtx(ctx) {
+    composeCtx = ctx;
+    renderComposeCtx();
+    switchTab('compose');
+    const ta = document.querySelector('.tweet-card textarea');
+    if (ta) ta.focus();
+    autosaveComposer();
+  }
+
+  function clearComposeCtx() {
+    composeCtx = null;
+    renderComposeCtx();
+    autosaveComposer();
+  }
+
+  function renderComposeCtx() {
+    let chip = document.getElementById('ctxChip');
+    if (!composeCtx) { if (chip) chip.remove(); return; }
+    if (!chip) {
+      chip = document.createElement('div');
+      chip.id = 'ctxChip';
+      chip.className = 'ctx-chip';
+      const wrap = document.querySelector('.compose-wrap');
+      wrap.insertBefore(chip, document.getElementById('threadContainer'));
+    }
+    chip.innerHTML = `
+      <span class="ctx-label">${composeCtx.type === 'reply' ? 'Replying to' : 'Quoting'} @${esc(composeCtx.username)}</span>
+      <span class="ctx-text"><a href="https://x.com/${esc(composeCtx.username)}/status/${composeCtx.id}" target="_blank" rel="noopener">view tweet ↗</a></span>
+      <button onclick="clearComposeCtx()" title="Remove">✕</button>`;
+  }
+
+  // ── composer autosave ───────────────────────────────────
+  // Persist-first: typed text AND attached images are written to localStorage
+  // on every change and restored on load, so a reload / crash / accidental
+  // close can never lose composer input. Cleared only on a successful post.
+  const AUTOSAVE_KEY = 'xvp_composer_autosave_v1';
+  let _autosaveTimer = null;
+
+  function snapshotComposer() {
+    const cards = Array.from(document.querySelectorAll('.tweet-card')).map(c => {
+      const id = +c.dataset.id;
+      return {
+        text: c.querySelector('textarea').value,
+        images: (cardImages.get(id) || []).map(({data, mimeType, name, preview}) => ({data, mimeType, name, preview})),
+      };
+    });
+    return { cards, draftId: currentEditDraftId, ctx: composeCtx };
+  }
+
+  function autosaveComposer() {
+    clearTimeout(_autosaveTimer);
+    _autosaveTimer = setTimeout(() => {
+      const snap = snapshotComposer();
+      const hasContent = snap.cards.some(c => c.text.trim() || c.images.length);
+      try {
+        if (hasContent) localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(snap));
+        else localStorage.removeItem(AUTOSAVE_KEY);
+      } catch (e) {
+        // Quota (usually oversized images). NEVER silently drop — salvage the
+        // text and warn loudly so nothing typed is lost on reload.
+        try {
+          localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(
+            { draftId: snap.draftId, cards: snap.cards.map(c => ({ text: c.text, images: [] })) }));
+        } catch {}
+        toast('⚠︎ images too large to auto-cache — don’t reload before posting', true);
+      }
+    }, 400);
+  }
+
+  function restoreComposer() {
+    let snap = null;
+    try { snap = JSON.parse(localStorage.getItem(AUTOSAVE_KEY) || 'null'); } catch { snap = null; }
+    if (!snap || !Array.isArray(snap.cards)) return false;
+    const hasContent = snap.cards.some(c => (c.text || '').trim() || (c.images || []).length);
+    if (!hasContent) return false;
+
+    document.getElementById('threadContainer').innerHTML = '';
+    cardImages.clear();
+    cardSeq = 0;
+    currentEditDraftId = snap.draftId || null;
+    composeCtx = snap.ctx || null;
+    renderComposeCtx();
+    snap.cards.forEach(cd => {
+      const id = addCard(cd.text || '');
+      if (cd.images && cd.images.length) {
+        cardImages.set(id, cd.images);
+        renderImageStrip(id);
+      }
+    });
+    updateButtons();
+    const imgCount = snap.cards.reduce((n, c) => n + (c.images ? c.images.length : 0), 0);
+    toast(`Restored unsaved draft${imgCount ? ` + ${imgCount} image${imgCount > 1 ? 's' : ''}` : ''}`);
+    return true;
   }
 
   // ── post handler ───────────────────────────────────────
@@ -1100,6 +1454,9 @@
         })),
       };
       if (currentEditDraftId) payload.draft_id = currentEditDraftId;
+      if (composeCtx) {
+        payload[composeCtx.type === 'reply' ? 'in_reply_to_tweet_id' : 'quote_tweet_id'] = composeCtx.id;
+      }
 
       const res = await fetch(`${API}/post`, {
         method: 'POST',
@@ -1241,7 +1598,10 @@
       const res = await fetch(`${API}/drafts/${id}/jam`, { method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      toast('Jam ready \u2014 run /cc-x-jam in CC');
+      // Server already pbcopy'd on the Mac; also copy in-browser as a fallback
+      // (covers LAN access where the browser isn't on the server machine).
+      try { if (data.prompt && navigator.clipboard) await navigator.clipboard.writeText(data.prompt); } catch {}
+      toast('Jam copied \u2014 paste /cc-x-jam in Terminal');
     } catch (e) {
       toast('Error: ' + e.message, true);
     }
@@ -1325,43 +1685,381 @@
 
   // ── feed tab ───────────────────────────────────────────
 
+  let currentFeed = 'top';
+  let statsLoaded = false;
+
   async function loadFeed() {
-    // Load stats
-    try {
-      const res = await fetch(`${API}/stats`);
-      const data = await res.json();
-      document.getElementById('statFollowers').textContent = fmtNum(data.followers);
-      document.getElementById('statTweets').textContent = fmtNum(data.tweet_count);
-      document.getElementById('statLikes').textContent = fmtNum(data.recent_metrics?.total_likes || 0);
-      document.getElementById('statImpressions').textContent = fmtNum(data.recent_metrics?.total_impressions || 0);
-    } catch {}
-
-    // Load tweets
-    try {
-      const res = await fetch(`${API}/tweets?count=20`);
-      const data = await res.json();
-      const el = document.getElementById('feedList');
-
-      if (!data.tweets?.length) {
-        el.innerHTML = '<div class="empty-state">No tweets found</div>';
-        return;
-      }
-
-      el.innerHTML = data.tweets.map(t => `
-        <div class="tweet-item">
-          <div class="tweet-text">${esc(t.text)}</div>
-          <div class="tweet-metrics">
-            <span>\u2764\uFE0F ${fmtNum(t.metrics.likes)}</span>
-            <span>\uD83D\uDD01 ${fmtNum(t.metrics.retweets)}</span>
-            <span>\uD83D\uDCAC ${fmtNum(t.metrics.replies)}</span>
-            <span>\uD83D\uDC41 ${fmtNum(t.metrics.impressions)}</span>
-          </div>
-          <div class="tweet-date">${fmtDate(t.created_at)}</div>
-        </div>
-      `).join('');
-    } catch (e) {
-      document.getElementById('feedList').innerHTML = `<div class="empty-state">Could not load feed: ${e.message}</div>`;
+    if (!statsLoaded) {
+      try {
+        const res = await fetch(`${API}/stats`);
+        const data = await res.json();
+        document.getElementById('statFollowers').textContent = fmtNum(data.followers);
+        document.getElementById('statTweets').textContent = fmtNum(data.tweet_count);
+        document.getElementById('statLikes').textContent = fmtNum(data.recent_metrics?.total_likes || 0);
+        document.getElementById('statImpressions').textContent = fmtNum(data.recent_metrics?.total_impressions || 0);
+        statsLoaded = true;
+      } catch {}
     }
+    renderCurrentFeed();
+  }
+
+  function switchFeed(name) {
+    currentFeed = name;
+    document.querySelectorAll('.subtab').forEach(b => b.classList.toggle('active', b.dataset.feed === name));
+    history.replaceState(null, '', `#feed/${name}`);
+    toggleKwEditor(false);
+    renderCurrentFeed();
+  }
+
+  function refreshCurrentFeed() { renderCurrentFeed(true); }
+
+  function cacheNote(data) {
+    const el = document.getElementById('feedCacheNote');
+    if (data && data.from_cache) {
+      el.textContent = `cached ${data.cached_at ? fmtDate(data.cached_at + 'Z') : ''}${data.stale ? ' \u00B7 live fetch failed, showing stale' : ''} \u2014 \u21BB for live`;
+    } else if (data) {
+      el.textContent = 'live';
+    } else el.textContent = '';
+  }
+
+  function tweetMedia(media) {
+    if (!media || !media.length) return '';
+    const cls = media.length === 1 ? 'tweet-media single' : 'tweet-media';
+    return `<div class="${cls}">` +
+      media.map(m => `<img src="${esc(m.url)}" alt="${esc(m.alt || '')}" loading="lazy">`).join('') +
+      `</div>`;
+  }
+
+  // \u2500\u2500 X-exact tweet rendering \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+  // X API v2 pre-escapes &, <, > in tweet.text \u2014 decode first, esc() re-escapes safely.
+  function decodeXml(t) {
+    return (t || '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  }
+
+  // Tweet text exactly like X renders it: t.co links become their display URL,
+  // trailing media t.co links are hidden (the media grid shows them), @mentions
+  // and #hashtags link out to x.com.
+  function tweetTextHtml(t) {
+    let text = decodeXml(t.text);
+    const urls = t.urls || [];
+    for (const u of urls) {
+      if (!u || !u.url) continue;
+      const isMedia = u.media_key || /\/(photo|video)\/\d+$/.test(u.expanded_url || '');
+      if (isMedia) text = text.replace(u.url, '').trimEnd();
+    }
+    let html = esc(text);
+    for (const u of urls) {
+      if (!u || !u.url) continue;
+      const eu = esc(u.url);
+      if (!html.includes(eu)) continue;
+      const href = esc(u.expanded_url || u.url);
+      const disp = esc(u.display_url || u.expanded_url || u.url);
+      html = html.split(eu).join(`<a href="${href}" target="_blank" rel="noopener">${disp}</a>`);
+    }
+    // bare URLs not covered by entities (e.g. stale cache without urls[])
+    html = html.replace(/(^|[^"'>])(https?:\/\/[^\s<]+)/g, (m, pre, url) =>
+      `${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`);
+    html = html.replace(/(^|[\s(])@([A-Za-z0-9_]{1,15})\b/g, '$1<a href="https://x.com/$2" target="_blank" rel="noopener">@$2</a>');
+    html = html.replace(/(^|[\s(])#([A-Za-z]\w*)/g, '$1<a href="https://x.com/hashtag/$2" target="_blank" rel="noopener">#$2</a>');
+    return html;
+  }
+
+  // relative time like X: 45s, 12m, 5h, then "Jun 14" / "Jun 14, 2025"
+  function xTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso), now = new Date(), s = (now - d) / 1000;
+    if (s < 60) return Math.max(1, Math.floor(s)) + 's';
+    if (s < 3600) return Math.floor(s / 60) + 'm';
+    if (s < 86400) return Math.floor(s / 3600) + 'h';
+    const opts = { month: 'short', day: 'numeric' };
+    if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
+    return d.toLocaleDateString('en-US', opts);
+  }
+
+  // X's actual UI icon paths
+  const SVG = {
+    reply: '<svg viewBox="0 0 24 24"><path d="M1.751 10c0-4.42 3.584-8 8.005-8h4.366c4.49 0 8.129 3.64 8.129 8.13 0 2.96-1.607 5.68-4.196 7.11l-8.054 4.46v-3.69h-.067c-4.49.1-8.183-3.51-8.183-8.01zm8.005-6c-3.317 0-6.005 2.69-6.005 6 0 3.37 2.77 6.08 6.138 6.01l.351-.01h1.761v2.3l5.087-2.81c1.951-1.08 3.163-3.13 3.163-5.36 0-3.39-2.744-6.13-6.129-6.13H9.756z"/></svg>',
+    rt: '<svg viewBox="0 0 24 24"><path d="M4.5 3.88l4.432 4.14-1.364 1.46L5.5 7.55V16c0 1.1.896 2 2 2H13v2H7.5c-2.209 0-4-1.79-4-4V7.55L1.432 9.48.068 8.02 4.5 3.88zM16.5 6H11V4h5.5c2.209 0 4 1.79 4 4v8.45l2.068-1.93 1.364 1.46-4.432 4.14-4.432-4.14 1.364-1.46 2.068 1.93V8c0-1.1-.896-2-2-2z"/></svg>',
+    like: '<svg viewBox="0 0 24 24"><path d="M16.697 5.5c-1.222-.06-2.679.51-3.89 2.16l-.805 1.09-.806-1.09C9.984 6.01 8.526 5.44 7.304 5.5c-1.243.07-2.349.78-2.91 1.91-.552 1.12-.633 2.78.479 4.82 1.074 1.97 3.257 4.27 7.129 6.61 3.87-2.34 6.052-4.64 7.126-6.61 1.111-2.04 1.03-3.7.477-4.82-.561-1.13-1.666-1.84-2.908-1.91zm4.187 7.69c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></svg>',
+    likeFill: '<svg viewBox="0 0 24 24"><path d="M20.884 13.19c-1.351 2.48-4.001 5.12-8.379 7.67l-.503.3-.504-.3c-4.379-2.55-7.029-5.19-8.382-7.67-1.36-2.5-1.41-4.86-.514-6.67.887-1.79 2.647-2.91 4.601-3.01 1.651-.09 3.368.56 4.798 2.01 1.429-1.45 3.146-2.1 4.796-2.01 1.954.1 3.714 1.22 4.601 3.01.896 1.81.846 4.17-.514 6.67z"/></svg>',
+    views: '<svg viewBox="0 0 24 24"><path d="M8.75 21V3h2v18h-2zM18 21V8.5h2V21h-2zM4 21l.004-10h2L6 21H4zm9.248 0v-7h2v7h-2z"/></svg>',
+    quote: '<svg viewBox="0 0 24 24"><path d="M14.23 2.854c.98-.977 2.56-.977 3.54 0l3.38 3.378c.97.977.97 2.559 0 3.536L9.91 21H3v-6.914L14.23 2.854zm2.12 1.414c-.19-.195-.51-.195-.7 0L5 14.914V19h4.09L19.73 8.354c.2-.196.2-.512 0-.708l-3.38-3.378z"/></svg>',
+  };
+
+  let myProfile = null;                       // {username, name, avatar} from /feeds/mine
+  const likedState = new Map(), rtState = new Map();  // session-local action toggles
+
+  function tweetCard(t, extra = '') {
+    const username = t.author_username || (myProfile && myProfile.username) || '_welf';
+    const name = t.author_name || (!t.author_username && myProfile && myProfile.name) || username;
+    const avatar = t.author_image || (!t.author_username && myProfile && myProfile.avatar) || null;
+    const avatarHtml = avatar
+      ? `<img class="tw-avatar" src="${esc(avatar.replace('_normal', '_bigger'))}" alt="" loading="lazy">`
+      : `<div class="tw-avatar">${esc((name[0] || 'W').toUpperCase())}</div>`;
+    const key = String(t.id);
+    const liked = likedState.get(key), rted = rtState.get(key);
+    const m = t.metrics || {};
+    const url = `https://x.com/${esc(username)}/status/${t.id}`;
+    return `
+      <article class="tweet-item" data-tweet-id="${t.id}">
+        ${avatarHtml}
+        <div class="tw-main">
+          <div class="tw-head">
+            <span class="tw-name">${esc(name)}</span>
+            <span class="tw-handle">@${esc(username)}</span>
+            <span class="tw-dot">\u00B7</span>
+            <a class="tw-time" href="${url}" target="_blank" rel="noopener" title="Open on X">${xTime(t.created_at)}</a>
+          </div>
+          <div class="tweet-text">${tweetTextHtml(t)}</div>
+          ${tweetMedia(t.media)}
+          ${extra}
+          <div class="tw-actions">
+            <button class="tw-act reply" title="Reply" onclick="startReply('${t.id}', '${esc(username)}')">
+              <span class="ico">${SVG.reply}</span><span>${fmtNum(m.replies || 0)}</span>
+            </button>
+            <button class="tw-act rt${rted ? ' on' : ''}" title="Repost" data-count="${m.retweets || 0}" onclick="openRtMenu(event, '${t.id}', '${esc(username)}')">
+              <span class="ico">${SVG.rt}</span><span>${fmtNum((m.retweets || 0) + (rted ? 1 : 0))}</span>
+            </button>
+            <button class="tw-act like${liked ? ' on' : ''}" title="Like" data-count="${m.likes || 0}" onclick="toggleLike('${t.id}', this)">
+              <span class="ico">${liked ? SVG.likeFill : SVG.like}</span><span>${fmtNum((m.likes || 0) + (liked ? 1 : 0))}</span>
+            </button>
+            ${m.impressions != null
+              ? `<a class="tw-act views" href="${url}" target="_blank" rel="noopener" title="Views"><span class="ico">${SVG.views}</span><span>${fmtNum(m.impressions)}</span></a>`
+              : '<span></span>'}
+          </div>
+        </div>
+      </article>`;
+  }
+
+  // \u2500\u2500 tweet actions \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+  async function toggleLike(id, btn) {
+    const key = String(id), on = !likedState.get(key);
+    likedState.set(key, on);
+    paintLikeBtn(btn, on);
+    try {
+      const r = await fetch(`${API}/tweet/${id}/like`, { method: on ? 'POST' : 'DELETE' });
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error || `HTTP ${r.status}`);
+    } catch (e) {
+      likedState.set(key, !on);
+      paintLikeBtn(btn, !on);
+      toast('Like failed: ' + e.message, true);
+    }
+  }
+
+  function paintLikeBtn(btn, on) {
+    btn.classList.toggle('on', on);
+    btn.querySelector('.ico').innerHTML = on ? SVG.likeFill : SVG.like;
+    btn.querySelector('span:last-child').textContent = fmtNum((+btn.dataset.count || 0) + (on ? 1 : 0));
+  }
+
+  let _rtMenuEl = null;
+  function closeRtMenu() {
+    if (_rtMenuEl) { _rtMenuEl.remove(); _rtMenuEl = null; }
+    document.removeEventListener('click', closeRtMenu);
+  }
+
+  function openRtMenu(ev, id, username) {
+    ev.stopPropagation();
+    if (_rtMenuEl) { closeRtMenu(); return; }
+    const rted = rtState.get(String(id));
+    const menu = document.createElement('div');
+    menu.className = 'rt-menu';
+    menu.innerHTML = `
+      <button onclick="doRepost('${id}', event)">${SVG.rt} ${rted ? 'Undo repost' : 'Repost'}</button>
+      <button onclick="startQuote('${id}', '${username}')">${SVG.quote} Quote</button>`;
+    document.body.appendChild(menu);
+    const r = ev.currentTarget.getBoundingClientRect();
+    menu.style.left = Math.min(r.left, innerWidth - 180) + 'px';
+    menu.style.top = Math.min(r.bottom + 4, innerHeight - 110) + 'px';
+    _rtMenuEl = menu;
+    setTimeout(() => document.addEventListener('click', closeRtMenu), 0);
+  }
+
+  async function doRepost(id, ev) {
+    if (ev) ev.stopPropagation();
+    closeRtMenu();
+    const key = String(id), on = !rtState.get(key);
+    rtState.set(key, on);
+    const btn = document.querySelector(`.tweet-item[data-tweet-id="${id}"] .tw-act.rt`);
+    if (btn) {
+      btn.classList.toggle('on', on);
+      btn.querySelector('span:last-child').textContent = fmtNum((+btn.dataset.count || 0) + (on ? 1 : 0));
+    }
+    try {
+      const r = await fetch(`${API}/tweet/${id}/retweet`, { method: on ? 'POST' : 'DELETE' });
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error || `HTTP ${r.status}`);
+      toast(on ? 'Reposted' : 'Repost removed');
+    } catch (e) {
+      rtState.set(key, !on);
+      if (btn) {
+        btn.classList.toggle('on', !on);
+        btn.querySelector('span:last-child').textContent = fmtNum((+btn.dataset.count || 0) + (!on ? 1 : 0));
+      }
+      toast('Repost failed: ' + e.message, true);
+    }
+  }
+
+  function startReply(id, username) { setComposeCtx({ type: 'reply', id: String(id), username }); }
+  function startQuote(id, username) { closeRtMenu(); setComposeCtx({ type: 'quote', id: String(id), username }); }
+
+  // Paint own-tweets list; remembers profile for avatar/name on own tweets.
+  function paintMine(data) {
+    const el = document.getElementById('feedList');
+    if (data.profile) myProfile = data.profile;
+    cacheNote(data);
+    let tweets = data.tweets || [];
+    if (currentFeed === 'top') {
+      tweets = [...tweets].sort((a, b) =>
+        ((b.metrics.likes + 2 * b.metrics.retweets + b.metrics.replies + 2 * (b.metrics.bookmarks || 0)) -
+         (a.metrics.likes + 2 * a.metrics.retweets + a.metrics.replies + 2 * (a.metrics.bookmarks || 0))));
+    }
+    el.innerHTML = tweets.length
+      ? `<div class="feed-stream">${tweets.map(t => tweetCard(t)).join('')}</div>`
+      : '<div class="empty-state">No tweets</div>';
+  }
+
+  let _feedGen = 0;  // drop out-of-date async paints when the user switches feeds
+
+  async function renderCurrentFeed(refresh = false) {
+    const gen = ++_feedGen;
+    const el = document.getElementById('feedList');
+    const q = refresh ? '&refresh=1' : '';
+    el.innerHTML = '<div class="empty-state">Loading\u2026</div>';
+    try {
+      if (currentFeed === 'top' || currentFeed === 'recent') {
+        const res = await fetch(`${API}/feeds/mine?sort=${currentFeed === 'top' ? 'top' : 'recent'}${q}`);
+        const data = await res.json();
+        if (gen !== _feedGen) return;
+        paintMine(data);
+        // Feed must be current every time the page/tab is visited: paint the
+        // cache instantly (above), then always revalidate live in background.
+        if (!refresh && data.from_cache) {
+          fetch(`${API}/feeds/mine?sort=${currentFeed === 'top' ? 'top' : 'recent'}&refresh=1`)
+            .then(r => r.json())
+            .then(d2 => { if (gen === _feedGen && d2 && !d2.stale && (d2.tweets || []).length) paintMine(d2); })
+            .catch(() => {});
+        }
+
+      } else if (currentFeed === 'replies') {
+        const res = await fetch(`${API}/feeds/replies?x=1${q}`);
+        const data = await res.json();
+        if (gen !== _feedGen) return;
+        cacheNote(data);
+        const open = (data.mentions || []).filter(m => !m.done);
+        const done = (data.mentions || []).filter(m => m.done);
+        const card = m => `<div class="mention-card${m.done ? ' done' : ''}">${tweetCard(m, `
+          <div class="mention-actions">
+            <button class="done-toggle" onclick="toggleReplyDone('${m.id}', ${!m.done})">${m.done ? 'undo' : 'mark replied'}</button>
+          </div>`)}</div>`;
+        el.innerHTML =
+          (open.length ? `<div class="feed-stream">${open.map(card).join('')}</div>` : '<div class="empty-state">Inbox zero \u2014 no replies owed \uD83C\uDF89</div>') +
+          (done.length ? `<div class="feed-cache-note" style="margin:14px 0 8px;">handled (${done.length})</div><div class="feed-stream">${done.map(card).join('')}</div>` : '');
+
+      } else if (currentFeed === 'arena') {
+        const res = await fetch(`${API}/feeds/arena?x=1${q}`);
+        const data = await res.json();
+        cacheNote(data);
+        el.innerHTML = `<div class="arena-grid">` + (data.blocks || []).map(b => `
+          <div class="arena-card">
+            ${b.image ? `<img src="${b.image}" loading="lazy" alt="">` : ''}
+            <div class="arena-card-body">${b.source_url ? `<a href="${b.source_url}" target="_blank">` : ''}${esc(b.title || (b.content || '').slice(0, 120) || '(untitled)')}${b.source_url ? ' \u2197</a>' : ''}</div>
+            <div class="arena-card-meta">${esc(b.channel)} \u00B7 ${esc(b.class)}</div>
+          </div>`).join('') + `</div>`;
+
+      } else if (currentFeed === 'topical') {
+        const res = await fetch(`${API}/feeds/topical?x=1${q}`);
+        const data = await res.json();
+        cacheNote(data);
+        const kwBtn = `<button class="btn btn-outline" style="font-size:13px; padding:6px 14px; margin-bottom:12px;" onclick="openKwEditor()">Edit keywords (${(data.keywords || []).length})</button>`;
+        const errNote = data.errors ? `<div class="feed-cache-note">\u26A0\uFE0E ${data.errors.length} keyword(s) failed \u2014 ${esc(data.errors[0].error)}${data.errors[0].error === 'Not Found' ? ' (VPS /search not deployed yet)' : ''}</div>` : '';
+        el.innerHTML = kwBtn + errNote +
+          ((data.tweets || []).length
+            ? `<div class="feed-stream">${data.tweets.map(t => tweetCard(t, `<span class="kw-chip">${esc(t.matched_keyword)}</span>`)).join('')}</div>`
+            : '<div class="empty-state">No topical tweets yet</div>');
+
+      } else if (currentFeed === 'suggestions') {
+        const res = await fetch(`${API}/drafts?kind=suggestion`);
+        const data = await res.json();
+        cacheNote(null);
+        el.innerHTML = (data.drafts || []).map(d => `
+          <div class="plain-card suggestion-card">
+            ${d.thread.map(t => `<div class="tweet-text">${esc(t.text)}</div>`).join('<hr style="border:none;border-top:1px solid var(--border);margin:8px 0;">')}
+            <div class="suggestion-actions">
+              <button class="btn btn-primary" style="font-size:12px; padding:5px 12px;" onclick="promoteSuggestion('${d.id}')">\u2192 Compose</button>
+              <button class="btn btn-outline" style="font-size:12px; padding:5px 12px;" onclick="deleteSuggestion('${d.id}')">Dismiss</button>
+            </div>
+          </div>`).join('') || '<div class="empty-state">No AI suggestions yet \u2014 the idea machine fills this tab</div>';
+
+      } else if (currentFeed === 'analytics') {
+        const res = await fetch(`${API}/analytics`);
+        const data = await res.json();
+        cacheNote(null);
+        if (!data.ok) { el.innerHTML = `<div class="empty-state">${esc(data.error)}</div>`; return; }
+        const w = data.windows;
+        const winCard = (label, x) => x ? `
+          <div class="metric-card"><div class="m-label">${label}</div>
+            <div class="m-value">${x.avg_engagement}</div>
+            <div class="m-sub">${x.avg_likes}\u2665 \u00B7 ${fmtNum(x.avg_impressions)} views avg</div></div>` : '';
+        el.innerHTML = `
+          <div class="analytics-grid">
+            <div class="metric-card"><div class="m-label">Last 7 days</div><div class="m-value">${data.counts.last_7d}</div><div class="m-sub">tweets</div></div>
+            <div class="metric-card"><div class="m-label">Last 30 days</div><div class="m-value">${data.counts.last_30d}</div><div class="m-sub">tweets</div></div>
+            <div class="metric-card"><div class="m-label">Last 90 days</div><div class="m-value">${data.counts.last_90d}</div><div class="m-sub">tweets (sample: ${data.sample})</div></div>
+            <div class="metric-card"><div class="m-label">Replies vs posts</div><div class="m-value">${data.replies_vs_posts.replies}:${data.replies_vs_posts.posts}</div><div class="m-sub">of last ${data.sample}</div></div>
+          </div>
+          <div class="feed-header" style="font-size:16px;">Avg engagement per tweet</div>
+          <div class="analytics-grid">
+            ${winCard('Last 10', w.last_10)}${winCard('Last 20', w.last_20)}${winCard('Last 50', w.last_50)}${winCard('Last 100', w.last_100)}
+          </div>
+          <div class="feed-cache-note">engagement = likes + 2\u00B7retweets + replies + 2\u00B7bookmarks \u00B7 computed from cache, costs nothing</div>`;
+      }
+    } catch (e) {
+      el.innerHTML = `<div class="empty-state">Could not load: ${esc(e.message)}</div>`;
+    }
+  }
+
+  async function toggleReplyDone(id, done) {
+    await fetch(`${API}/feeds/replies/${id}/done`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ done }),
+    });
+    renderCurrentFeed();
+  }
+
+  // keyword editor
+  async function openKwEditor() {
+    const res = await fetch(`${API}/settings/feed_keywords`);
+    const data = await res.json();
+    document.getElementById('kwTextarea').value = (data.value || []).join('\n');
+    toggleKwEditor(true);
+  }
+  function toggleKwEditor(show) {
+    document.getElementById('kwEditor').style.display = show ? 'block' : 'none';
+  }
+  async function saveKeywords() {
+    const value = document.getElementById('kwTextarea').value.split('\n').map(s => s.trim()).filter(Boolean);
+    await fetch(`${API}/settings/feed_keywords`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value }),
+    });
+    toggleKwEditor(false);
+    toast('Keywords saved \u2014 refreshing topical feed');
+    renderCurrentFeed(true);
+  }
+
+  // AI suggestions
+  async function promoteSuggestion(id) {
+    await fetch(`${API}/drafts/${id}/promote`, { method: 'POST' });
+    await editDraft(id);
+    toast('Moved to composer');
+  }
+  async function deleteSuggestion(id) {
+    await fetch(`${API}/drafts/${id}`, { method: 'DELETE' });
+    renderCurrentFeed();
   }
 
   // ── schedule tab ───────────────────────────────────────
@@ -1511,6 +2209,7 @@
   }
 
   function fmtNum(n) {
+    if (n == null || isNaN(n)) return '—';
     if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
     if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
     return String(n);
@@ -1556,10 +2255,23 @@
 
   // ── init ───────────────────────────────────────────────
 
-  addCard();
+  if (!restoreComposer()) addCard();
   checkVPS();
   loadDrafts();
   setInterval(checkVPS, 30000);
+
+  // Restore the view from the URL hash — refresh keeps you where you were.
+  (function initRoute() {
+    const [tab, feed] = location.hash.slice(1).split('/');
+    if (!tab || tab === 'compose') return;
+    if (['feed', 'schedule', 'assets'].includes(tab)) {
+      if (tab === 'feed' && feed) {
+        currentFeed = feed;
+        document.querySelectorAll('.subtab').forEach(b => b.classList.toggle('active', b.dataset.feed === feed));
+      }
+      switchTab(tab);
+    }
+  })();
 </script>
 
 </body>
