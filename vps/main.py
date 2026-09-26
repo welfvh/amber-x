@@ -13,6 +13,7 @@ import logging
 import hashlib
 import base64
 import secrets
+import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -230,6 +231,12 @@ class ScheduleRequest(BaseModel):
 
 def post_tweets(tweets: list[TweetPayload]) -> dict:
     """Post a tweet or thread via tweepy. Returns {url, id}."""
+    # A missing image must fail the post before anything goes out, not post
+    # the text without it. Scheduled posts upload their images only now.
+    missing = [p for t in tweets for p in (t.media_paths or []) if not os.path.exists(p)]
+    if missing:
+        raise FileNotFoundError(f"media file(s) missing on the VPS: {', '.join(missing)}")
+
     client = get_v2_client()
     api = get_v1_api()
 
@@ -238,12 +245,10 @@ def post_tweets(tweets: list[TweetPayload]) -> dict:
 
     for tweet in tweets:
         media_ids = []
-        if tweet.media_paths:
-            for path in tweet.media_paths:
-                if os.path.exists(path):
-                    media = api.media_upload(path)
-                    media_ids.append(media.media_id)
-                    log.info(f"Uploaded media: {path} -> {media.media_id}")
+        for path in tweet.media_paths or []:
+            media = api.media_upload(path)
+            media_ids.append(media.media_id)
+            log.info(f"Uploaded media: {path} -> {media.media_id}")
 
         kwargs = {"text": tweet.text or " "}
         if media_ids:
@@ -296,15 +301,30 @@ _posts_in_flight: set[str] = set()
 
 # ── routes ───────────────────────────────────────────────────
 
+# The studio polls /status every 30 s per open tab. A live get_me per poll
+# spent one X read each time (~120 reads/hour per tab), so a successful X check
+# is reused. Each poll still reaches this service, so a dead VPS or a wrong
+# bearer token still shows at once.
+STATUS_TTL_S = 600  # re-check the X credentials at most every 10 min
+_status_lock = threading.Lock()
+_status_ok: dict = {}  # last successful check: username, at (monotonic), checked_at (ISO)
+
+
 @app.get("/status")
 def status():
-    """Verify credentials and return username."""
-    try:
-        client = get_v2_client()
-        me = client.get_me()
-        return {"ok": True, "username": me.data.username}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+    """Verify credentials and return username. A successful X check is reused
+    for STATUS_TTL_S; after a failed one, the next call checks again."""
+    with _status_lock:
+        if _status_ok and time.monotonic() - _status_ok["at"] < STATUS_TTL_S:
+            return {"ok": True, "username": _status_ok["username"], "checked_at": _status_ok["checked_at"]}
+        checked_at = datetime.now(timezone.utc).isoformat()
+        try:
+            me = get_v2_client().get_me()
+        except Exception as e:
+            _status_ok.clear()
+            return {"ok": False, "error": str(e), "checked_at": checked_at}
+        _status_ok.update(username=me.data.username, at=time.monotonic(), checked_at=checked_at)
+        return {"ok": True, "username": me.data.username, "checked_at": checked_at}
 
 
 @app.post("/upload")
