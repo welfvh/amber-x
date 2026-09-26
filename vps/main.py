@@ -912,15 +912,23 @@ def auth_status():
 # ── bookmarks ─────────────────────────────────────────────────
 
 @app.get("/bookmarks")
-def bookmarks(count: int = 25):
-    """Fetch user's bookmarks via OAuth 2.0. Auto-refreshes tokens."""
-    params = urllib.parse.urlencode({
-        "max_results": min(count, 100),
-        "tweet.fields": "created_at,text,author_id",
-        "user.fields": "username,name",
-        "expansions": "author_id",
-    })
-    url = f"https://api.twitter.com/2/users/{X_USER_ID}/bookmarks?{params}"
+def bookmarks(max_results: int = 100, pagination_token: str | None = None):
+    """One page of the user's bookmarks, newest bookmark first (OAuth 2.0).
+
+    X offers no since_id here, so callers page with next_token and stop once
+    they reach bookmarks they already store. Every returned post is billed.
+    """
+    query = {
+        "max_results": max(1, min(max_results, 100)),
+        "tweet.fields": "created_at,text,note_tweet,author_id,public_metrics,entities,"
+                        "lang,conversation_id,referenced_tweets,attachments",
+        "user.fields": "username,name,profile_image_url",
+        "media.fields": "type,url,preview_image_url,width,height,alt_text",
+        "expansions": "author_id,attachments.media_keys",
+    }
+    if pagination_token:
+        query["pagination_token"] = pagination_token
+    url = f"https://api.twitter.com/2/users/{X_USER_ID}/bookmarks?{urllib.parse.urlencode(query)}"
 
     try:
         data = _oauth2_api_request(url)
@@ -929,20 +937,32 @@ def bookmarks(count: int = 25):
         log.error(f"Bookmarks failed: {e.code} {body}")
         raise HTTPException(e.code, f"X API error: {body}")
 
-    # Format response with author info
-    users = {u["id"]: u for u in data.get("includes", {}).get("users", [])}
-    tweets = []
+    includes = data.get("includes", {})
+    users = {u["id"]: u for u in includes.get("users", [])}
+    media = {m["media_key"]: m for m in includes.get("media", [])}
+    items = []
     for tw in data.get("data", []):
         author = users.get(tw.get("author_id", ""), {})
-        tweets.append({
+        handle = author.get("username")
+        items.append({
             "id": tw["id"],
-            "text": tw["text"],
-            "author": f"@{author.get('username', 'unknown')}",
-            "author_name": author.get("name", ""),
+            "url": f"https://x.com/{handle or 'i/web'}/status/{tw['id']}",
+            # Long posts carry the full text in note_tweet; text is truncated.
+            "text": (tw.get("note_tweet") or {}).get("text") or tw["text"],
             "created_at": tw.get("created_at"),
+            "lang": tw.get("lang"),
+            "conversation_id": tw.get("conversation_id"),
+            "author_id": tw.get("author_id"),
+            "author_username": handle,
+            "author_name": author.get("name"),
+            "author_avatar": author.get("profile_image_url"),
+            "public_metrics": tw.get("public_metrics"),
+            "entities": tw.get("entities"),
+            "referenced_tweets": tw.get("referenced_tweets"),
+            "media": [media[k] for k in (tw.get("attachments") or {}).get("media_keys", []) if k in media],
         })
 
-    return {"bookmarks": tweets, "count": len(tweets)}
+    return {"bookmarks": items, "next_token": data.get("meta", {}).get("next_token")}
 
 
 if __name__ == "__main__":
