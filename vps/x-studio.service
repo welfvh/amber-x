@@ -1,0 +1,17 @@
+[Unit]
+Description=x-studio — X content studio UI (x.welf.ai)
+After=network.target x-vibepoastry.service
+
+[Service]
+WorkingDirectory=/opt/x-studio
+ExecStart=/usr/bin/node server.js
+Restart=always
+RestartSec=3
+Environment=HOME=/root
+Environment=PORT=3131
+Environment=NO_TUNNEL=1
+Environment=XVP_AUTH_TOKEN=<from keychain cc/x-vibepoastry>
+Environment="XVP_UI_PASSWORD=<from keychain cc/x-composer>"
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,15 @@
+[Unit]
+Description=x-mcp — MCP wrapper around x-vibepoastry for Poke and other MCP clients
+After=network.target x-vibepoastry.service
+Wants=x-vibepoastry.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/x-mcp
+ExecStart=/opt/x-mcp/venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8143
+Restart=always
+RestartSec=5
+EnvironmentFile=/opt/x-mcp/.env
+
+[Install]
+WantedBy=multi-user.target

@@ -61,6 +61,11 @@ server.js       Local API server (port 3131)
 .env            Your credentials (gitignored, never committed)
 ```
 
+## Sibling projects
+
+- `vps/` — `x-vibepoastry` FastAPI service that runs on the Hetzner VPS and actually calls the X API (the local server.js tunnels to it).
+- `mcp-server/` — `x-mcp`, an MCP-protocol facade in front of `x-vibepoastry` so consumer AIs like Poke (interaction.co) can post on Welf's behalf. See `mcp-server/README.md`.
+
 ## License
 
 MIT

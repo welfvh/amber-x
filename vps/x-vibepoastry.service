@@ -2,13 +2,33 @@
 Description=x-vibepoastry — X/Twitter API service for local composer
 After=network.target
 
+# Needs a system user first:
+#   useradd --system --home-dir /var/lib/x-vibepoastry --shell /usr/sbin/nologin x-vibepoastry
 [Service]
 Type=simple
+User=x-vibepoastry
+Group=x-vibepoastry
 WorkingDirectory=/opt/x-vibepoastry
-ExecStart=/opt/x-vibepoastry/venv/bin/python -m uvicorn main:app --host 0.0.0.0 --port 8142
+ExecStart=/opt/x-vibepoastry/venv/bin/python -m uvicorn main:app --host 127.0.0.1 --port 8142
 Restart=always
 RestartSec=5
 EnvironmentFile=/opt/x-vibepoastry/.env
+# schedule.db, oauth2_tokens.json and uploads/ live here, not in /opt.
+Environment=XVP_DATA_DIR=/var/lib/x-vibepoastry
+StateDirectory=x-vibepoastry
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 
 [Install]
 WantedBy=multi-user.target
