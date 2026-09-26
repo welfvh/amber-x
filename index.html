@@ -1672,10 +1672,14 @@
 
   async function deleteDraft(id) {
     try {
-      await fetch(`${API}/drafts/${id}`, { method: 'DELETE' });
-      if (currentEditDraftId === id) clearComposer();
+      const res = await fetch(`${API}/drafts/${id}`, { method: 'DELETE' });
+      if (!res.ok && res.status !== 404) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+      // The composer may hold this draft, maybe with unsaved edits: keep the
+      // text and detach it, so autosave keeps it and a save makes a new draft.
+      const kept = currentEditDraftId === id;
+      if (kept) detachComposer();
       loadDrafts();
-      toast('Draft deleted');
+      toast(kept ? 'Draft deleted — its text stays in the composer' : 'Draft deleted');
     } catch (e) {
       toast('Error: ' + e.message, true);
     }
