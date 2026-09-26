@@ -2001,15 +2001,9 @@
         const res = await fetch(`${API}/feeds/mine?sort=${currentFeed === 'top' ? 'top' : 'recent'}${q}`);
         const data = await res.json();
         if (gen !== _feedGen) return;
+        // Each X read costs credits: the server reads live only when its
+        // 15-min cache has expired or was dropped by a post, or on ↻.
         paintMine(data);
-        // Feed must be current every time the page/tab is visited: paint the
-        // cache instantly (above), then always revalidate live in background.
-        if (!refresh && data.from_cache) {
-          fetch(`${API}/feeds/mine?sort=${currentFeed === 'top' ? 'top' : 'recent'}&refresh=1`)
-            .then(r => r.json())
-            .then(d2 => { if (gen === _feedGen && d2 && !d2.stale && (d2.tweets || []).length) paintMine(d2); })
-            .catch(() => {});
-        }
 
       } else if (currentFeed === 'replies') {
         const res = await fetch(`${API}/feeds/replies?x=1${q}`);
