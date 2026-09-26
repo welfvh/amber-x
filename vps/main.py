@@ -24,18 +24,20 @@ from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
-from dotenv import load_dotenv
 
 import tweepy
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 
-# ── config ────────────────────────────────────────────────────
-load_dotenv(Path(__file__).parent / ".env")
-DB_PATH = Path(__file__).parent / "schedule.db"
-OAUTH2_TOKEN_FILE = Path(__file__).parent / "oauth2_tokens.json"
-UPLOAD_DIR = Path("/tmp/xvp_uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
+# Production configuration comes from the service environment. Local runs can
+# source a development env file explicitly before starting the process.
+DATA_DIR = Path(os.environ.get("XVP_DATA_DIR", "/var/lib/x-vibepoastry"))
+DATA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+DB_PATH = DATA_DIR / "schedule.db"
+OAUTH2_TOKEN_FILE = DATA_DIR / "oauth2_tokens.json"
+UPLOAD_DIR = DATA_DIR / "uploads"
+UPLOAD_DIR.mkdir(exist_ok=True, mode=0o700)
+MAX_UPLOAD_BYTES = 16 * 1024 * 1024
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("x-vibepoastry")
@@ -312,7 +314,9 @@ async def upload(file: UploadFile = File(...)):
     filename = f"xvp_{uuid.uuid4().hex[:8]}{ext}"
     filepath = UPLOAD_DIR / filename
 
-    content = await file.read()
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="upload_too_large")
     filepath.write_bytes(content)
     log.info(f"Uploaded: {filepath} ({len(content)} bytes)")
     return {"path": str(filepath)}
