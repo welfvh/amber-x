@@ -1059,6 +1059,15 @@
   let cardSeq = 0;
   const cardImages = new Map();
   let currentEditDraftId = null;
+  // Counts composer switches. A save response may set the draft id only while
+  // the composer it was sent from is still loaded.
+  let composerGen = 0;
+
+  // Points the composer at another draft (or none) and starts a new generation.
+  function switchComposerDraft(id) {
+    currentEditDraftId = id;
+    composerGen++;
+  }
 
   // ── theme ──────────────────────────────────────────────
 
@@ -1328,7 +1337,7 @@
     document.getElementById('threadContainer').innerHTML = '';
     cardImages.clear();
     cardSeq = 0;
-    currentEditDraftId = null;
+    switchComposerDraft(null);
     composeCtx = null;
     renderComposeCtx();
     try { localStorage.removeItem(AUTOSAVE_KEY); } catch {}
@@ -1452,7 +1461,7 @@
     document.getElementById('threadContainer').innerHTML = '';
     cardImages.clear();
     cardSeq = 0;
-    currentEditDraftId = snap.draftId || null;
+    switchComposerDraft(snap.draftId || null);
     composeCtx = snap.ctx || null;
     renderComposeCtx();
     snap.cards.forEach(cd => {
@@ -1518,6 +1527,7 @@
   // if it has none or it is gone. Resolves with the draft id only after the
   // server confirms.
   async function saveComposerDraft() {
+    const gen = composerGen;
     const thread = collectThread().map(t => ({
       text: t.text,
       media: t.media.map(({ data, mimeType, name }) => ({ data, mimeType, name })),
@@ -1532,7 +1542,9 @@
     if (!res || res.status === 404) res = await fetch(`${API}/drafts`, { method: 'POST', ...opts });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-    currentEditDraftId = data.id;
+    // A late response must not relabel a composer that now holds another
+    // draft: the next save would write that draft over this one.
+    if (gen === composerGen) currentEditDraftId = data.id;
     return data.id;
   }
 
@@ -1616,7 +1628,7 @@
       document.getElementById('threadContainer').innerHTML = '';
       cardImages.clear();
       cardSeq = 0;
-      currentEditDraftId = id;
+      switchComposerDraft(id);
       composeCtx = ctxFromThread(thread);
       renderComposeCtx();
 
@@ -1684,11 +1696,12 @@
     if (!thread.length) return;
 
     // Save as draft first if needed
-    if (!currentEditDraftId) {
-      try { await saveComposerDraft(); } catch (e) { toast('Error: ' + e.message, true); return; }
+    let id = currentEditDraftId;
+    if (!id) {
+      try { id = await saveComposerDraft(); } catch (e) { toast('Error: ' + e.message, true); return; }
     }
 
-    jamDraft(currentEditDraftId);
+    jamDraft(id);
   }
 
   // ── schedule ───────────────────────────────────────────
