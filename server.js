@@ -19,6 +19,10 @@ import { randomUUID, timingSafeEqual } from 'crypto';
 import Database from 'better-sqlite3';
 
 const PORT = parseInt(process.env.PORT || '3131', 10);
+// Loopback only: on the VPS, Caddy on the same host is the one way in.
+// HOST=0.0.0.0 opens a local run to the LAN (phone, Daylight); without
+// XVP_UI_PASSWORD that UI has no login.
+const HOST = process.env.HOST || '127.0.0.1';
 const __dir = dirname(fileURLToPath(import.meta.url));
 const VPS_HOST = 'root@162.55.60.42';
 const VPS_PORT = 8142;
@@ -999,8 +1003,8 @@ const server = http.createServer(async (req, res) => {
 
 if (process.env.NO_TUNNEL !== '1') startTunnel(); // NO_TUNNEL=1 for dev instances (prod already tunnels :8142)
 
-server.listen(PORT, () => {
-  console.log(`x-vibepoastry → http://localhost:${PORT}`);
+server.listen(PORT, HOST, () => {
+  console.log(`x-vibepoastry → http://${HOST}:${PORT}`);
   console.log(`Data: ${DATA_DIR}`);
 });
 
