@@ -549,7 +549,7 @@ def tweets(count: int = 20):
         for tweet in response.data:
             pm = tweet.public_metrics or {}
             tweets_list.append({
-                "id": tweet.id,
+                "id": str(tweet.id),
                 "text": tweet.text,
                 "created_at": tweet.created_at.isoformat() if tweet.created_at else None,
                 "media": _tweet_media(tweet, media_idx),
@@ -681,9 +681,9 @@ def activity(count: int = 20):
             pm = tweet.public_metrics or {}
             author = authors.get(tweet.author_id, {})
             mentions.append({
-                "id": tweet.id,
+                "id": str(tweet.id),
                 "text": tweet.text,
-                "author_id": tweet.author_id,
+                "author_id": str(tweet.author_id) if tweet.author_id else None,
                 "author_username": author.get("username", "unknown"),
                 "author_name": author.get("name", ""),
                 "author_image": author.get("avatar"),
@@ -735,9 +735,9 @@ def search(q: str, count: int = 25):
             pm = tweet.public_metrics or {}
             author = authors.get(tweet.author_id, {})
             tweets_list.append({
-                "id": tweet.id,
+                "id": str(tweet.id),
                 "text": tweet.text,
-                "author_id": tweet.author_id,
+                "author_id": str(tweet.author_id) if tweet.author_id else None,
                 "author_username": author.get("username", "unknown"),
                 "author_name": author.get("name", ""),
                 "author_image": author.get("profile_image_url"),
