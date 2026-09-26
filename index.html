@@ -1484,6 +1484,9 @@
   async function handlePost() {
     const thread = collectThread();
     if (!thread.length) return;
+    // What the composer holds now. Loading another draft or typing while the
+    // post is in flight changes it, and that input must survive the success.
+    const sent = { gen: composerGen, key: composerKey() };
 
     const btn = document.getElementById('postBtn');
     btn.disabled = true;
@@ -1510,15 +1513,33 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
 
-      clearComposer();
+      const cleared = settleComposerAfterPost(sent, payload.draft_id);
       loadDrafts();
-      toast(`Posted! \u2192 ${data.url}`);
+      toast(`Posted! \u2192 ${data.url}${cleared ? '' : ' \u2014 composer changed meanwhile, kept'}`);
     } catch (e) {
       toast('Error: ' + e.message, true);
     } finally {
       btn.textContent = 'Post';
       updateButtons();
     }
+  }
+
+  // After a successful post. `sent` is { gen, key } when the post came from the
+  // composer. Clears the composer only if it still holds exactly what was
+  // posted. Otherwise its text stays, and if it still points at the posted
+  // draft it is detached, so the next save makes a new draft.
+  function settleComposerAfterPost(sent, draftId) {
+    if (sent && sent.gen === composerGen && sent.key === composerKey()) { clearComposer(); return true; }
+    if (draftId && currentEditDraftId === draftId) detachComposer();
+    return false;
+  }
+
+  // Keeps the composer's text but points it at no draft (its draft was posted
+  // or deleted). Writes the autosave at once, so a reload keeps the text too.
+  function detachComposer() {
+    switchComposerDraft(null);
+    clearTimeout(_autosaveTimer);
+    writeAutosave();
   }
 
   // ── draft management ───────────────────────────────────
