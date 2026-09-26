@@ -1354,6 +1354,23 @@
     autosaveComposer();
   }
 
+  // Reply/quote context rides on the first tweet under the field names /post
+  // and /schedule read, so saved drafts and scheduled posts keep it.
+  function withCtx(tweets) {
+    if (composeCtx && tweets.length) {
+      tweets[0][composeCtx.type === 'reply' ? 'in_reply_to_tweet_id' : 'quote_tweet_id'] = composeCtx.id;
+      tweets[0].ctx_username = composeCtx.username;
+    }
+    return tweets;
+  }
+
+  function ctxFromThread(thread) {
+    const t = thread[0] || {};
+    if (t.in_reply_to_tweet_id) return { type: 'reply', id: t.in_reply_to_tweet_id, username: t.ctx_username || '' };
+    if (t.quote_tweet_id) return { type: 'quote', id: t.quote_tweet_id, username: t.ctx_username || '' };
+    return null;
+  }
+
   function renderComposeCtx() {
     let chip = document.getElementById('ctxChip');
     if (!composeCtx) { if (chip) chip.remove(); return; }
@@ -1401,7 +1418,7 @@
         // text and warn loudly so nothing typed is lost on reload.
         try {
           localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(
-            { draftId: snap.draftId, cards: snap.cards.map(c => ({ text: c.text, images: [] })) }));
+            { draftId: snap.draftId, ctx: snap.ctx, cards: snap.cards.map(c => ({ text: c.text, images: [] })) }));
         } catch {}
         toast('⚠︎ images too large to auto-cache — don’t reload before posting', true);
       }
@@ -1453,7 +1470,8 @@
           media: t.media.filter(m => m.data),
         })),
       };
-      if (currentEditDraftId) payload.draft_id = currentEditDraftId;
+      // /post sends a draft's stored thread — save the composer into it first.
+      if (currentEditDraftId) payload.draft_id = await saveComposerDraft();
       if (composeCtx) {
         payload[composeCtx.type === 'reply' ? 'in_reply_to_tweet_id' : 'quote_tweet_id'] = composeCtx.id;
       }
@@ -1479,28 +1497,30 @@
 
   // ── draft management ───────────────────────────────────
 
+  // Writes the composer into its draft (a new one if it has none or it is
+  // gone). Resolves with the draft id only after the server confirms.
+  async function saveComposerDraft() {
+    const opts = {
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thread: withCtx(collectThread().map(t => ({ text: t.text }))) }),
+    };
+    let res = currentEditDraftId
+      ? await fetch(`${API}/drafts/${currentEditDraftId}`, { method: 'PUT', ...opts })
+      : null;
+    if (!res || res.status === 404) res = await fetch(`${API}/drafts`, { method: 'POST', ...opts });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    currentEditDraftId = data.id;
+    return data.id;
+  }
+
   async function saveDraftFromComposer() {
-    const thread = collectThread();
-    if (!thread.length) { toast('Nothing to save', true); return; }
+    if (!collectThread().length) { toast('Nothing to save', true); return; }
 
     try {
-      if (currentEditDraftId) {
-        await fetch(`${API}/drafts/${currentEditDraftId}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ thread: thread.map(t => ({ text: t.text })) }),
-        });
-        toast('Draft updated');
-      } else {
-        const res = await fetch(`${API}/drafts`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ thread: thread.map(t => ({ text: t.text })) }),
-        });
-        const data = await res.json();
-        currentEditDraftId = data.id;
-        toast('Draft saved');
-      }
+      const existed = !!currentEditDraftId;
+      await saveComposerDraft();
+      toast(existed ? 'Draft updated' : 'Draft saved');
       loadDrafts();
     } catch (e) {
       toast('Error: ' + e.message, true);
@@ -1557,6 +1577,8 @@
       cardImages.clear();
       cardSeq = 0;
       currentEditDraftId = id;
+      composeCtx = ctxFromThread(thread);
+      renderComposeCtx();
 
       thread.forEach(t => addCard(t.text || ''));
       updateButtons();
@@ -1613,13 +1635,7 @@
 
     // Save as draft first if needed
     if (!currentEditDraftId) {
-      const res = await fetch(`${API}/drafts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ thread: thread.map(t => ({ text: t.text })) }),
-      });
-      const data = await res.json();
-      currentEditDraftId = data.id;
+      try { await saveComposerDraft(); } catch (e) { toast('Error: ' + e.message, true); return; }
     }
 
     jamDraft(currentEditDraftId);
@@ -1657,9 +1673,10 @@
     if (scheduleDraftId) {
       const res = await fetch(`${API}/drafts/${scheduleDraftId}`);
       const draft = await res.json();
-      tweets = (draft.thread || []).map(t => ({ text: t.text }));
+      tweets = (draft.thread || []).map(({ text, in_reply_to_tweet_id, quote_tweet_id }) =>
+        ({ text, in_reply_to_tweet_id, quote_tweet_id }));
     } else {
-      tweets = collectThread().map(t => ({ text: t.text }));
+      tweets = withCtx(collectThread().map(t => ({ text: t.text })));
     }
 
     try {

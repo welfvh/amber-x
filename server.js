@@ -656,7 +656,12 @@ const server = http.createServer(async (req, res) => {
       if (!scheduledAt) return send(res, 400, { error: 'scheduled_at required' });
 
       const result = await vpsRequest('POST', '/schedule', {
-        tweets: tweets.map(t => ({ text: t.text, media_paths: t.media_paths || null })),
+        tweets: tweets.map((t, i) => ({
+          text: t.text,
+          media_paths: t.media_paths || null,
+          in_reply_to_tweet_id: i === 0 ? (t.in_reply_to_tweet_id || body.in_reply_to_tweet_id || null) : null,
+          quote_tweet_id: i === 0 ? (t.quote_tweet_id || body.quote_tweet_id || null) : null,
+        })),
         scheduled_at: scheduledAt,
       });
 
