@@ -1589,16 +1589,28 @@
     }).join('');
   }
 
+  // Everything a composer swap would destroy: text, images, reply/quote context.
+  function composerKey() {
+    const { cards, ctx } = snapshotComposer();
+    return JSON.stringify({ cards, ctx });
+  }
+
   async function editDraft(id, doneMsg = '') {
     try {
       // Persist-first: whatever the composer holds becomes a saved draft
-      // before the loaded one replaces it. A failed save aborts the load.
-      const saved = collectThread().length > 0;
-      if (saved) { await saveComposerDraft(); loadDrafts(); }
-
-      const res = await fetch(`${API}/drafts/${id}`);
-      const draft = await res.json();
-      if (!res.ok) throw new Error(draft.error || `HTTP ${res.status}`);
+      // before the loaded one replaces it. The composer stays editable during
+      // the save and the fetch, so repeat both until nothing changed since the
+      // last confirmed save. No await separates that check from the swap
+      // below. A failed save aborts the load.
+      let savedKey = null, draft;
+      do {
+        if (collectThread().length) { savedKey = composerKey(); await saveComposerDraft(); }
+        const res = await fetch(`${API}/drafts/${id}`);
+        draft = await res.json();
+        if (!res.ok) throw new Error(draft.error || `HTTP ${res.status}`);
+      } while (collectThread().length && composerKey() !== savedKey);
+      const saved = savedKey !== null;
+      if (saved) loadDrafts();
       const thread = draft.thread || [];
 
       document.getElementById('threadContainer').innerHTML = '';
