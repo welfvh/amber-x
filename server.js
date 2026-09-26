@@ -321,9 +321,15 @@ const sessStmts = {
   del: db.prepare('DELETE FROM ui_sessions WHERE token = ?'),
 };
 
+// Login-limiter key. x.welf.ai is DNS-only: Caddy on this host is the only
+// proxy, and it writes the TCP peer into X-Forwarded-For as the LAST entry.
+// Every other header value (cf-connecting-ip, earlier XFF entries) comes from
+// the caller, so only a loopback peer may name the client.
 function clientIp(req) {
-  return (req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown')
-    .toString().split(',')[0].trim();
+  const peer = req.socket.remoteAddress || 'unknown';
+  const viaLocalProxy = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(peer);
+  const xff = req.headers['x-forwarded-for'];
+  return viaLocalProxy && xff ? xff.toString().split(',').pop().trim() : peer;
 }
 
 function isAuthed(req) {
