@@ -970,11 +970,14 @@ def bookmarks(max_results: int = 100, pagination_token: str | None = None):
     for tw in data.get("data", []):
         author = users.get(tw.get("author_id", ""), {})
         handle = author.get("username")
+        # Long posts carry the full text in note_tweet, with entities whose
+        # offsets index that text. Top-level text and entities are a
+        # truncated preview, so text and entities must come from one source.
+        body = tw.get("note_tweet") or tw
         items.append({
             "id": tw["id"],
             "url": f"https://x.com/{handle or 'i/web'}/status/{tw['id']}",
-            # Long posts carry the full text in note_tweet; text is truncated.
-            "text": (tw.get("note_tweet") or {}).get("text") or tw["text"],
+            "text": body["text"],
             "created_at": tw.get("created_at"),
             "lang": tw.get("lang"),
             "conversation_id": tw.get("conversation_id"),
@@ -983,7 +986,7 @@ def bookmarks(max_results: int = 100, pagination_token: str | None = None):
             "author_name": author.get("name"),
             "author_avatar": author.get("profile_image_url"),
             "public_metrics": tw.get("public_metrics"),
-            "entities": tw.get("entities"),
+            "entities": body.get("entities"),
             "referenced_tweets": referenced(tw),
             "media": media_of(tw),
         })
