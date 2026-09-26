@@ -1682,6 +1682,12 @@
   }
 
   async function postDraft(id) {
+    // Open in the composer: post what is on screen. handlePost saves the
+    // composer into the draft first, so unsaved edits are posted, not lost.
+    if (currentEditDraftId === id) {
+      if (!collectThread().length) { toast('The composer holding this draft is empty \u2014 nothing to post', true); return; }
+      return handlePost();
+    }
     try {
       const res = await fetch(`${API}/post`, {
         method: 'POST',
@@ -1691,7 +1697,7 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       loadDrafts();
-      if (currentEditDraftId === id) clearComposer();
+      settleComposerAfterPost(null, id);  // opened meanwhile: keep its text, detach
       toast(`Posted! \u2192 ${data.url}`);
     } catch (e) {
       toast('Error: ' + e.message, true);
