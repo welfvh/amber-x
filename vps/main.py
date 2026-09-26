@@ -231,6 +231,12 @@ class ScheduleRequest(BaseModel):
 
 def post_tweets(tweets: list[TweetPayload]) -> dict:
     """Post a tweet or thread via tweepy. Returns {url, id}."""
+    # A missing image must fail the post before anything goes out, not post
+    # the text without it. Scheduled posts upload their images only now.
+    missing = [p for t in tweets for p in (t.media_paths or []) if not os.path.exists(p)]
+    if missing:
+        raise FileNotFoundError(f"media file(s) missing on the VPS: {', '.join(missing)}")
+
     client = get_v2_client()
     api = get_v1_api()
 
@@ -239,12 +245,10 @@ def post_tweets(tweets: list[TweetPayload]) -> dict:
 
     for tweet in tweets:
         media_ids = []
-        if tweet.media_paths:
-            for path in tweet.media_paths:
-                if os.path.exists(path):
-                    media = api.media_upload(path)
-                    media_ids.append(media.media_id)
-                    log.info(f"Uploaded media: {path} -> {media.media_id}")
+        for path in tweet.media_paths or []:
+            media = api.media_upload(path)
+            media_ids.append(media.media_id)
+            log.info(f"Uploaded media: {path} -> {media.media_id}")
 
         kwargs = {"text": tweet.text or " "}
         if media_ids:

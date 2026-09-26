@@ -230,10 +230,8 @@ async function vpsRequest(method, path, body = null) {
   return data;
 }
 
-async function uploadMediaToVPS(filePath) {
+async function uploadMediaToVPS(fileData, filename) {
   const url = `http://localhost:${VPS_PORT}/upload`;
-  const fileData = readFileSync(filePath);
-  const filename = basename(filePath);
 
   // Use FormData via fetch
   const boundary = `----xvp${Date.now()}`;
@@ -254,6 +252,42 @@ async function uploadMediaToVPS(filePath) {
   const data = await res.json();
   if (!res.ok) throw new Error(data.detail || 'Upload failed');
   return data.path;
+}
+
+// Uploads a thread's images to the VPS and returns the tweets in the shape the
+// VPS takes. Images come from the draft's media rows and from inline base64
+// (the composer's images). /post and /schedule share it, so a scheduled post
+// carries the same images as an immediate one: the VPS keeps the files and
+// uploads them to X when it posts. A missing image fails the request instead
+// of dropping the image.
+async function toVpsTweets(tweets, draftId, body) {
+  const out = [];
+  for (let i = 0; i < tweets.length; i++) {
+    const t = tweets[i];
+    const mediaPaths = [];
+
+    if (draftId) {
+      for (const m of stmts.listMedia.all(draftId).filter(m => m.tweet_idx === i)) {
+        if (!existsSync(m.file_path)) throw new Error(`Image missing on the studio: ${m.file_path}`);
+        mediaPaths.push(await uploadMediaToVPS(readFileSync(m.file_path), basename(m.file_path)));
+      }
+    }
+
+    // Inline base64 media (from UI)
+    for (const img of Array.isArray(t.media) ? t.media : []) {
+      if (!img.data) continue;
+      const ext = (img.mimeType || 'image/png').split('/')[1] || 'png';
+      mediaPaths.push(await uploadMediaToVPS(Buffer.from(img.data, 'base64'), `inline.${ext}`));
+    }
+
+    out.push({
+      text: t.text || ' ',
+      media_paths: mediaPaths.length ? mediaPaths : null,
+      in_reply_to_tweet_id: i === 0 ? (t.in_reply_to_tweet_id || body.in_reply_to_tweet_id || null) : null,
+      quote_tweet_id: i === 0 ? (t.quote_tweet_id || body.quote_tweet_id || null) : null,
+    });
+  }
+  return out;
 }
 
 // ── HTTP helpers ────────────────────────────────────────────
@@ -591,45 +625,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       try {
-        // Upload any local media to VPS first
-        const vpsPayload = [];
-        for (let i = 0; i < tweets.length; i++) {
-          const t = tweets[i];
-          const mediaPaths = [];
-
-          if (draftId) {
-            const mediaRows = stmts.listMedia.all(draftId).filter(m => m.tweet_idx === i);
-            for (const m of mediaRows) {
-              if (existsSync(m.file_path)) {
-                const vpsPath = await uploadMediaToVPS(m.file_path);
-                mediaPaths.push(vpsPath);
-              }
-            }
-          }
-
-          // Also handle inline base64 media (from UI)
-          if (t.media && Array.isArray(t.media)) {
-            for (const img of t.media) {
-              if (img.data) {
-                const ext = (img.mimeType || 'image/png').split('/')[1] || 'png';
-                const tmpPath = resolve(MEDIA_DIR, `tmp_${randomUUID().slice(0,8)}.${ext}`);
-                writeFileSync(tmpPath, Buffer.from(img.data, 'base64'));
-                const vpsPath = await uploadMediaToVPS(tmpPath);
-                mediaPaths.push(vpsPath);
-                unlinkSync(tmpPath);
-              }
-            }
-          }
-
-          vpsPayload.push({
-            text: t.text || ' ',
-            media_paths: mediaPaths.length ? mediaPaths : null,
-            in_reply_to_tweet_id: i === 0 ? (t.in_reply_to_tweet_id || body.in_reply_to_tweet_id || null) : null,
-            quote_tweet_id: i === 0 ? (t.quote_tweet_id || body.quote_tweet_id || null) : null,
-          });
-        }
-
-        const result = await vpsRequest('POST', '/post', { tweets: vpsPayload });
+        const result = await vpsRequest('POST', '/post', { tweets: await toVpsTweets(tweets, draftId, body) });
 
         if (draftId) {
           stmts.updateDraftPosted.run(new Date().toISOString(), result.url, draftId);
@@ -649,21 +645,26 @@ const server = http.createServer(async (req, res) => {
 
     // ── scheduling ────────────────────────────────────────
 
-    // POST /schedule
+    // POST /schedule — same input as /post: draft_id sends the draft's stored
+    // thread (text, images, reply/quote), else body.tweets. Images go to the
+    // VPS now; its scheduler uploads them to X at the scheduled time.
     if (req.method === 'POST' && path === '/schedule') {
       const body = await readBody(req);
-      const tweets = body.tweets || [{ text: body.text }];
       const scheduledAt = body.scheduled_at;
 
       if (!scheduledAt) return send(res, 400, { error: 'scheduled_at required' });
+      // Checked before the image upload, so a rejected time leaves no files on the VPS.
+      if (!(new Date(scheduledAt) > new Date())) return send(res, 400, { error: 'Scheduled time must be in the future' });
+
+      let tweets = body.tweets || [{ text: body.text }];
+      if (body.draft_id) {
+        const draft = stmts.getDraft.get(body.draft_id);
+        if (!draft) return send(res, 404, { error: 'Draft not found' });
+        tweets = JSON.parse(draft.thread_json);
+      }
 
       const result = await vpsRequest('POST', '/schedule', {
-        tweets: tweets.map((t, i) => ({
-          text: t.text,
-          media_paths: t.media_paths || null,
-          in_reply_to_tweet_id: i === 0 ? (t.in_reply_to_tweet_id || body.in_reply_to_tweet_id || null) : null,
-          quote_tweet_id: i === 0 ? (t.quote_tweet_id || body.quote_tweet_id || null) : null,
-        })),
+        tweets: await toVpsTweets(tweets, body.draft_id, body),
         scheduled_at: scheduledAt,
       });
 

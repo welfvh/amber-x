@@ -1764,26 +1764,30 @@
     if (!timeInput) { toast('Pick a time', true); return; }
 
     const scheduledAt = new Date(timeInput).toISOString();
-    let tweets;
-
-    if (scheduleDraftId) {
-      const res = await fetch(`${API}/drafts/${scheduleDraftId}`);
-      const draft = await res.json();
-      tweets = (draft.thread || []).map(({ text, in_reply_to_tweet_id, quote_tweet_id }) =>
-        ({ text, in_reply_to_tweet_id, quote_tweet_id }));
-    } else {
-      tweets = withCtx(collectThread().map(t => ({ text: t.text })));
-    }
+    const listDraftId = scheduleDraftId;
 
     try {
+      // Same input as /post: a draft id makes the server send the stored
+      // thread with its images; the composer's own images ride inline. A
+      // draft open in the composer is saved first, so the schedule carries
+      // what is on screen.
+      let payload;
+      if (listDraftId && listDraftId !== currentEditDraftId) {
+        payload = { draft_id: listDraftId };
+      } else {
+        const thread = collectThread();
+        if (!thread.length) throw new Error('Nothing to schedule');
+        payload = { tweets: withCtx(thread.map(t => ({
+          text: t.text,
+          media: t.media.filter(m => m.data).map(({ data, mimeType, name }) => ({ data, mimeType, name })),
+        }))) };
+        if (currentEditDraftId) payload.draft_id = await saveComposerDraft();
+      }
+      payload.scheduled_at = scheduledAt;
       const res = await fetch(`${API}/schedule`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tweets,
-          scheduled_at: scheduledAt,
-          draft_id: scheduleDraftId || currentEditDraftId,
-        }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || data.detail);
@@ -2199,6 +2203,7 @@
       el.innerHTML = data.items.map(item => {
         const tweets = JSON.parse(item.tweets_json || '[]');
         const preview = tweets[0]?.text || '(empty)';
+        const images = tweets.reduce((n, t) => n + (t.media_paths?.length || 0), 0);
         const countdown = item.status === 'pending' ? getCountdown(item.scheduled_at) : '';
 
         return `
@@ -2207,6 +2212,7 @@
             ${countdown ? `<span class="queue-countdown">${countdown}</span>` : ''}
             <div class="queue-time">Scheduled: ${fmtDate(item.scheduled_at)}</div>
             <div class="draft-body">${esc(preview.slice(0, 200))}</div>
+            ${images ? `<div class="draft-meta">${images} image${images > 1 ? 's' : ''}</div>` : ''}
             ${item.tweet_url ? `<div class="draft-meta"><a href="${item.tweet_url}" target="_blank">${item.tweet_url}</a></div>` : ''}
             ${item.error ? `<div class="draft-meta" style="color:var(--danger)">Error: ${esc(item.error)}</div>` : ''}
             ${item.status === 'pending' ? `<div class="draft-actions"><button class="btn btn-danger" onclick="cancelScheduled('${item.id}')">Cancel</button></div>` : ''}
