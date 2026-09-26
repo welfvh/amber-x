@@ -1962,6 +1962,7 @@
       } else if (currentFeed === 'arena') {
         const res = await fetch(`${API}/feeds/arena?x=1${q}`);
         const data = await res.json();
+        if (gen !== _feedGen) return;
         cacheNote(data);
         el.innerHTML = `<div class="arena-grid">` + (data.blocks || []).map(b => {
           const img = safeUrl(b.image), src = safeUrl(b.source_url);
@@ -1976,6 +1977,7 @@
       } else if (currentFeed === 'topical') {
         const res = await fetch(`${API}/feeds/topical?x=1${q}`);
         const data = await res.json();
+        if (gen !== _feedGen) return;
         cacheNote(data);
         const kwBtn = `<button class="btn btn-outline" style="font-size:13px; padding:6px 14px; margin-bottom:12px;" onclick="openKwEditor()">Edit keywords (${(data.keywords || []).length})</button>`;
         const errNote = data.errors ? `<div class="feed-cache-note">\u26A0\uFE0E ${data.errors.length} keyword(s) failed \u2014 ${esc(data.errors[0].error)}${data.errors[0].error === 'Not Found' ? ' (VPS /search not deployed yet)' : ''}</div>` : '';
@@ -1987,6 +1989,7 @@
       } else if (currentFeed === 'suggestions') {
         const res = await fetch(`${API}/drafts?kind=suggestion`);
         const data = await res.json();
+        if (gen !== _feedGen) return;
         cacheNote(null);
         el.innerHTML = (data.drafts || []).map(d => `
           <div class="plain-card suggestion-card">
@@ -2000,6 +2003,7 @@
       } else if (currentFeed === 'analytics') {
         const res = await fetch(`${API}/analytics`);
         const data = await res.json();
+        if (gen !== _feedGen) return;
         cacheNote(null);
         if (!data.ok) { el.innerHTML = `<div class="empty-state">${esc(data.error)}</div>`; return; }
         const w = data.windows;
@@ -2021,6 +2025,7 @@
           <div class="feed-cache-note">engagement = likes + 2\u00B7retweets + replies + 2\u00B7bookmarks \u00B7 computed from cache, costs nothing</div>`;
       }
     } catch (e) {
+      if (gen !== _feedGen) return;
       el.innerHTML = `<div class="empty-state">Could not load: ${esc(e.message)}</div>`;
     }
   }
