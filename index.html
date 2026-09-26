@@ -2136,7 +2136,7 @@
   // AI suggestions
   async function promoteSuggestion(id) {
     await fetch(`${API}/drafts/${id}/promote`, { method: 'POST' });
-    await editDraft(id, 'Moved to composer');
+    if (await editDraft(id, 'Moved to composer')) switchTab('compose');
   }
   async function deleteSuggestion(id) {
     await fetch(`${API}/drafts/${id}`, { method: 'DELETE' });
