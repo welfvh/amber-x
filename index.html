@@ -1116,7 +1116,9 @@
       const r = await fetch(`${API}/status`);
       const d = await r.json();
       dot.className = d.ok ? 'vps-dot ok' : 'vps-dot err';
-      dot.title = d.ok ? `Connected: @${d.username}` : (d.error || 'Error');
+      // The VPS re-checks the X credentials at most every 10 min (each check
+      // is a paid X read); every poll still proves the VPS is reachable.
+      dot.title = d.ok ? `Connected: @${d.username}${d.checked_at ? ` · X checked ${xTime(d.checked_at)} ago` : ''}` : (d.error || 'Error');
     } catch {
       dot.className = 'vps-dot err';
       dot.title = 'VPS unreachable';
