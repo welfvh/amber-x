@@ -24,18 +24,20 @@ from fastapi.responses import RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
-from dotenv import load_dotenv
 
 import tweepy
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 
-# ── config ────────────────────────────────────────────────────
-load_dotenv(Path(__file__).parent / ".env")
-DB_PATH = Path(__file__).parent / "schedule.db"
-OAUTH2_TOKEN_FILE = Path(__file__).parent / "oauth2_tokens.json"
-UPLOAD_DIR = Path("/tmp/xvp_uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
+# Production configuration comes from the service environment. Local runs can
+# source a development env file explicitly before starting the process.
+DATA_DIR = Path(os.environ.get("XVP_DATA_DIR", "/var/lib/x-vibepoastry"))
+DATA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+DB_PATH = DATA_DIR / "schedule.db"
+OAUTH2_TOKEN_FILE = DATA_DIR / "oauth2_tokens.json"
+UPLOAD_DIR = DATA_DIR / "uploads"
+UPLOAD_DIR.mkdir(exist_ok=True, mode=0o700)
+MAX_UPLOAD_BYTES = 16 * 1024 * 1024
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("x-vibepoastry")
@@ -312,7 +314,9 @@ async def upload(file: UploadFile = File(...)):
     filename = f"xvp_{uuid.uuid4().hex[:8]}{ext}"
     filepath = UPLOAD_DIR / filename
 
-    content = await file.read()
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="upload_too_large")
     filepath.write_bytes(content)
     log.info(f"Uploaded: {filepath} ({len(content)} bytes)")
     return {"path": str(filepath)}
@@ -908,15 +912,26 @@ def auth_status():
 # ── bookmarks ─────────────────────────────────────────────────
 
 @app.get("/bookmarks")
-def bookmarks(count: int = 25):
-    """Fetch user's bookmarks via OAuth 2.0. Auto-refreshes tokens."""
-    params = urllib.parse.urlencode({
-        "max_results": min(count, 100),
-        "tweet.fields": "created_at,text,author_id",
-        "user.fields": "username,name",
-        "expansions": "author_id",
-    })
-    url = f"https://api.twitter.com/2/users/{X_USER_ID}/bookmarks?{params}"
+def bookmarks(max_results: int = 100, pagination_token: str | None = None):
+    """One page of the user's bookmarks, newest bookmark first (OAuth 2.0).
+
+    X offers no since_id here, so callers page with next_token and stop once
+    they reach bookmarks they already store. Every returned post is billed.
+    """
+    query = {
+        "max_results": max(1, min(max_results, 100)),
+        "tweet.fields": "created_at,text,note_tweet,author_id,public_metrics,entities,"
+                        "lang,conversation_id,referenced_tweets,attachments",
+        "user.fields": "username,name,profile_image_url",
+        "media.fields": "type,url,preview_image_url,width,height,alt_text",
+        # Quoted / replied-to posts are billed as extra post reads, but the
+        # bookmark often means nothing without them.
+        "expansions": "author_id,attachments.media_keys,referenced_tweets.id,"
+                      "referenced_tweets.id.author_id,referenced_tweets.id.attachments.media_keys",
+    }
+    if pagination_token:
+        query["pagination_token"] = pagination_token
+    url = f"https://api.twitter.com/2/users/{X_USER_ID}/bookmarks?{urllib.parse.urlencode(query)}"
 
     try:
         data = _oauth2_api_request(url)
@@ -925,20 +940,58 @@ def bookmarks(count: int = 25):
         log.error(f"Bookmarks failed: {e.code} {body}")
         raise HTTPException(e.code, f"X API error: {body}")
 
-    # Format response with author info
-    users = {u["id"]: u for u in data.get("includes", {}).get("users", [])}
-    tweets = []
+    includes = data.get("includes", {})
+    users = {u["id"]: u for u in includes.get("users", [])}
+    media = {m["media_key"]: m for m in includes.get("media", [])}
+    ref_posts = {t["id"]: t for t in includes.get("tweets", [])}
+
+    def media_of(tw: dict) -> list:
+        return [media[k] for k in (tw.get("attachments") or {}).get("media_keys", []) if k in media]
+
+    def referenced(tw: dict) -> list:
+        refs = []
+        for ref in tw.get("referenced_tweets") or []:
+            post = ref_posts.get(ref["id"], {})
+            author = users.get(post.get("author_id", ""), {})
+            refs.append({
+                "type": ref["type"],
+                "id": ref["id"],
+                "text": (post.get("note_tweet") or {}).get("text") or post.get("text"),
+                "created_at": post.get("created_at"),
+                "author_id": post.get("author_id"),
+                "author_username": author.get("username"),
+                "author_name": author.get("name"),
+                "author_avatar": author.get("profile_image_url"),
+                "media": media_of(post),
+            })
+        return refs
+
+    items = []
     for tw in data.get("data", []):
         author = users.get(tw.get("author_id", ""), {})
-        tweets.append({
+        handle = author.get("username")
+        # Long posts carry the full text in note_tweet, with entities whose
+        # offsets index that text. Top-level text and entities are a
+        # truncated preview, so text and entities must come from one source.
+        body = tw.get("note_tweet") or tw
+        items.append({
             "id": tw["id"],
-            "text": tw["text"],
-            "author": f"@{author.get('username', 'unknown')}",
-            "author_name": author.get("name", ""),
+            "url": f"https://x.com/{handle or 'i/web'}/status/{tw['id']}",
+            "text": body["text"],
             "created_at": tw.get("created_at"),
+            "lang": tw.get("lang"),
+            "conversation_id": tw.get("conversation_id"),
+            "author_id": tw.get("author_id"),
+            "author_username": handle,
+            "author_name": author.get("name"),
+            "author_avatar": author.get("profile_image_url"),
+            "public_metrics": tw.get("public_metrics"),
+            "entities": body.get("entities"),
+            "referenced_tweets": referenced(tw),
+            "media": media_of(tw),
         })
 
-    return {"bookmarks": tweets, "count": len(tweets)}
+    return {"bookmarks": items, "next_token": data.get("meta", {}).get("next_token")}
 
 
 if __name__ == "__main__":
