@@ -1802,18 +1802,21 @@
   let statsLoaded = false;
 
   async function loadFeed() {
-    if (!statsLoaded) {
-      try {
-        const res = await fetch(`${API}/stats`);
-        const data = await res.json();
-        document.getElementById('statFollowers').textContent = fmtNum(data.followers);
-        document.getElementById('statTweets').textContent = fmtNum(data.tweet_count);
-        document.getElementById('statLikes').textContent = fmtNum(data.recent_metrics?.total_likes || 0);
-        document.getElementById('statImpressions').textContent = fmtNum(data.recent_metrics?.total_impressions || 0);
-        statsLoaded = true;
-      } catch {}
-    }
+    if (!statsLoaded) await loadStats();
     renderCurrentFeed();
+  }
+
+  // Stats bar. The server caches /stats for 15 min (a live fetch costs 2 X reads).
+  async function loadStats(refresh = false) {
+    try {
+      const res = await fetch(`${API}/stats${refresh ? '?refresh=1' : ''}`);
+      const data = await res.json();
+      document.getElementById('statFollowers').textContent = fmtNum(data.followers);
+      document.getElementById('statTweets').textContent = fmtNum(data.tweet_count);
+      document.getElementById('statLikes').textContent = fmtNum(data.recent_metrics?.total_likes || 0);
+      document.getElementById('statImpressions').textContent = fmtNum(data.recent_metrics?.total_impressions || 0);
+      statsLoaded = true;
+    } catch {}
   }
 
   function switchFeed(name) {
@@ -1824,7 +1827,11 @@
     renderCurrentFeed();
   }
 
-  function refreshCurrentFeed() { renderCurrentFeed(true); }
+  function refreshCurrentFeed() {
+    // ↻ on the own-tweet feeds also reads the stats bar live: same account data.
+    if (currentFeed === 'top' || currentFeed === 'recent') loadStats(true);
+    renderCurrentFeed(true);
+  }
 
   function cacheNote(data) {
     const el = document.getElementById('feedCacheNote');

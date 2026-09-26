@@ -636,8 +636,8 @@ const server = http.createServer(async (req, res) => {
         }
 
         // The freshly posted tweet must show up on next feed visit — drop the
-        // mine cache so the next load fetches live.
-        db.prepare("DELETE FROM feed_cache WHERE feed_key = 'mine'").run();
+        // mine and stats caches so the next load fetches live.
+        db.prepare("DELETE FROM feed_cache WHERE feed_key IN ('mine', 'stats')").run();
 
         return send(res, 200, { ok: true, url: result.url, id: result.id });
       } catch (postErr) {
@@ -722,8 +722,10 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, data);
     }
 
+    // Stats bar of the feed tab: 2 X reads per live fetch, so cached like the
+    // mine feed (15 min, dropped by a post, ?refresh=1 forces).
     if (req.method === 'GET' && path === '/stats') {
-      const data = await vpsRequest('GET', '/stats');
+      const data = await cachedFeed('stats', 15, params.refresh, () => vpsRequest('GET', '/stats'));
       return send(res, 200, data);
     }
 
