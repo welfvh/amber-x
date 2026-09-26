@@ -1758,7 +1758,7 @@
       html = html.split(eu).join(`<a href="${href}" target="_blank" rel="noopener">${disp}</a>`);
     }
     // bare URLs not covered by entities (e.g. stale cache without urls[])
-    html = html.replace(/(^|[^"'>])(https?:\/\/[^\s<]+)/g, (m, pre, url) =>
+    html = html.replace(/(^|[^"'>])(https?:\/\/(?:[^\s<&]|&(?!quot;|#39;))+)/g, (m, pre, url) =>
       `${pre}<a href="${url}" target="_blank" rel="noopener">${url}</a>`);
     html = html.replace(/(^|[\s(])@([A-Za-z0-9_]{1,15})\b/g, '$1<a href="https://x.com/$2" target="_blank" rel="noopener">@$2</a>');
     html = html.replace(/(^|[\s(])#([A-Za-z]\w*)/g, '$1<a href="https://x.com/hashtag/$2" target="_blank" rel="noopener">#$2</a>');
@@ -1963,12 +1963,15 @@
         const res = await fetch(`${API}/feeds/arena?x=1${q}`);
         const data = await res.json();
         cacheNote(data);
-        el.innerHTML = `<div class="arena-grid">` + (data.blocks || []).map(b => `
+        el.innerHTML = `<div class="arena-grid">` + (data.blocks || []).map(b => {
+          const img = safeUrl(b.image), src = safeUrl(b.source_url);
+          return `
           <div class="arena-card">
-            ${b.image ? `<img src="${b.image}" loading="lazy" alt="">` : ''}
-            <div class="arena-card-body">${b.source_url ? `<a href="${b.source_url}" target="_blank">` : ''}${esc(b.title || (b.content || '').slice(0, 120) || '(untitled)')}${b.source_url ? ' \u2197</a>' : ''}</div>
+            ${img ? `<img src="${img}" loading="lazy" alt="">` : ''}
+            <div class="arena-card-body">${src ? `<a href="${src}" target="_blank" rel="noopener">` : ''}${esc(b.title || (b.content || '').slice(0, 120) || '(untitled)')}${src ? ' \u2197</a>' : ''}</div>
             <div class="arena-card-meta">${esc(b.channel)} \u00B7 ${esc(b.class)}</div>
-          </div>`).join('') + `</div>`;
+          </div>`;
+        }).join('') + `</div>`;
 
       } else if (currentFeed === 'topical') {
         const res = await fetch(`${API}/feeds/topical?x=1${q}`);
@@ -2202,10 +2205,16 @@
 
   // ── helpers ────────────────────────────────────────────
 
+  // Safe in text AND quoted attributes: innerHTML escapes &<> but not quotes.
   function esc(t) {
     const d = document.createElement('div');
     d.appendChild(document.createTextNode(t || ''));
-    return d.innerHTML;
+    return d.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  // Third-party URLs (Are.na blocks) reach src/href only as http(s).
+  function safeUrl(u) {
+    return /^https?:\/\//i.test(u || '') ? esc(u) : '';
   }
 
   function fmtNum(n) {
