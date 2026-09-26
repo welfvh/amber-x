@@ -452,10 +452,11 @@ const server = http.createServer(async (req, res) => {
     // ── draft CRUD ────────────────────────────────────────
 
     // GET /drafts — list drafts (?kind=suggestion for the AI tab; default: real drafts)
+    // Text only: inline images stay out of the list (GET /drafts/:id has them).
     if (req.method === 'GET' && path === '/drafts') {
       const kind = params.kind === 'suggestion' ? 'suggestion' : 'draft';
-      const drafts = stmts.listDrafts.all(kind).map(d => ({
-        ...d, thread: JSON.parse(d.thread_json),
+      const drafts = stmts.listDrafts.all(kind).map(({ thread_json, ...d }) => ({
+        ...d, thread: JSON.parse(thread_json).map(({ media, ...t }) => t),
       }));
       return send(res, 200, { drafts });
     }
@@ -485,7 +486,8 @@ const server = http.createServer(async (req, res) => {
       const draft = stmts.getDraft.get(draftGetMatch[1]);
       if (!draft) return send(res, 404, { error: 'Not found' });
       const media = stmts.listMedia.all(draft.id);
-      return send(res, 200, { ...draft, thread: JSON.parse(draft.thread_json), media });
+      const { thread_json, ...meta } = draft;
+      return send(res, 200, { ...meta, thread: JSON.parse(thread_json), media });
     }
 
     // PUT /drafts/:id
@@ -950,7 +952,7 @@ const server = http.createServer(async (req, res) => {
       const draft = stmts.getDraft.get(jamMatch[1]);
       if (!draft) return send(res, 404, { error: 'Draft not found' });
 
-      const thread = JSON.parse(draft.thread_json);
+      const thread = JSON.parse(draft.thread_json).map(({ media, ...t }) => t); // jam works on text
       const jamData = {
         draft_id: draft.id,
         thread,

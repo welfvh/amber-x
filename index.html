@@ -1497,12 +1497,17 @@
 
   // ── draft management ───────────────────────────────────
 
-  // Writes the composer into its draft (a new one if it has none or it is
-  // gone). Resolves with the draft id only after the server confirms.
+  // Writes the composer (text, images, context) into its draft, or a new one
+  // if it has none or it is gone. Resolves with the draft id only after the
+  // server confirms.
   async function saveComposerDraft() {
+    const thread = collectThread().map(t => ({
+      text: t.text,
+      media: t.media.map(({ data, mimeType, name }) => ({ data, mimeType, name })),
+    }));
     const opts = {
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ thread: withCtx(collectThread().map(t => ({ text: t.text }))) }),
+      body: JSON.stringify({ thread: withCtx(thread) }),
     };
     let res = currentEditDraftId
       ? await fetch(`${API}/drafts/${currentEditDraftId}`, { method: 'PUT', ...opts })
@@ -1567,10 +1572,16 @@
     }).join('');
   }
 
-  async function editDraft(id) {
+  async function editDraft(id, doneMsg = '') {
     try {
+      // Persist-first: whatever the composer holds becomes a saved draft
+      // before the loaded one replaces it. A failed save aborts the load.
+      const saved = collectThread().length > 0;
+      if (saved) { await saveComposerDraft(); loadDrafts(); }
+
       const res = await fetch(`${API}/drafts/${id}`);
       const draft = await res.json();
+      if (!res.ok) throw new Error(draft.error || `HTTP ${res.status}`);
       const thread = draft.thread || [];
 
       document.getElementById('threadContainer').innerHTML = '';
@@ -1580,10 +1591,20 @@
       composeCtx = ctxFromThread(thread);
       renderComposeCtx();
 
-      thread.forEach(t => addCard(t.text || ''));
+      thread.forEach(t => {
+        const cid = addCard(t.text || '');
+        if (t.media && t.media.length) {
+          cardImages.set(cid, t.media.map(m => ({ ...m, preview: `data:${m.mimeType};base64,${m.data}` })));
+          renderImageStrip(cid);
+        }
+      });
       updateButtons();
+      if (saved) toast(`${doneMsg || 'Draft loaded'} \u2014 previous composer saved to Drafts`);
+      else if (doneMsg) toast(doneMsg);
+      return true;
     } catch (e) {
       toast('Error loading draft: ' + e.message, true);
+      return false;
     }
   }
 
@@ -2079,8 +2100,7 @@
   // AI suggestions
   async function promoteSuggestion(id) {
     await fetch(`${API}/drafts/${id}/promote`, { method: 'POST' });
-    await editDraft(id);
-    toast('Moved to composer');
+    await editDraft(id, 'Moved to composer');
   }
   async function deleteSuggestion(id) {
     await fetch(`${API}/drafts/${id}`, { method: 'DELETE' });
