@@ -1405,25 +1405,42 @@
     return { cards, draftId: currentEditDraftId, ctx: composeCtx };
   }
 
+  function writeAutosave() {
+    _autosaveTimer = null;
+    const snap = snapshotComposer();
+    const hasContent = snap.cards.some(c => c.text.trim() || c.images.length);
+    try {
+      if (hasContent) localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(snap));
+      else localStorage.removeItem(AUTOSAVE_KEY);
+    } catch (e) {
+      // Quota (usually oversized images). NEVER silently drop — salvage the
+      // text and warn loudly so nothing typed is lost on reload.
+      try {
+        localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(
+          { draftId: snap.draftId, ctx: snap.ctx, cards: snap.cards.map(c => ({ text: c.text, images: [] })) }));
+      } catch {}
+      toast('⚠︎ images too large to auto-cache — don’t reload before posting', true);
+    }
+  }
+
   function autosaveComposer() {
     clearTimeout(_autosaveTimer);
-    _autosaveTimer = setTimeout(() => {
-      const snap = snapshotComposer();
-      const hasContent = snap.cards.some(c => c.text.trim() || c.images.length);
-      try {
-        if (hasContent) localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(snap));
-        else localStorage.removeItem(AUTOSAVE_KEY);
-      } catch (e) {
-        // Quota (usually oversized images). NEVER silently drop — salvage the
-        // text and warn loudly so nothing typed is lost on reload.
-        try {
-          localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(
-            { draftId: snap.draftId, ctx: snap.ctx, cards: snap.cards.map(c => ({ text: c.text, images: [] })) }));
-        } catch {}
-        toast('⚠︎ images too large to auto-cache — don’t reload before posting', true);
-      }
-    }, 400);
+    _autosaveTimer = setTimeout(writeAutosave, 400);
   }
+
+  // The 400 ms debounce must not lose the last keystrokes: write at once when
+  // the page goes away. pagehide covers close, reload and navigation;
+  // visibilitychange covers tab switches and mobile backgrounding, where the
+  // browser may kill the page without a pagehide.
+  function flushAutosave() {
+    if (_autosaveTimer === null) return;
+    clearTimeout(_autosaveTimer);
+    writeAutosave();
+  }
+  addEventListener('pagehide', flushAutosave);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flushAutosave();
+  });
 
   function restoreComposer() {
     let snap = null;
