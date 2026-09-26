@@ -924,7 +924,10 @@ def bookmarks(max_results: int = 100, pagination_token: str | None = None):
                         "lang,conversation_id,referenced_tweets,attachments",
         "user.fields": "username,name,profile_image_url",
         "media.fields": "type,url,preview_image_url,width,height,alt_text",
-        "expansions": "author_id,attachments.media_keys",
+        # Quoted / replied-to posts are billed as extra post reads, but the
+        # bookmark often means nothing without them.
+        "expansions": "author_id,attachments.media_keys,referenced_tweets.id,"
+                      "referenced_tweets.id.author_id,referenced_tweets.id.attachments.media_keys",
     }
     if pagination_token:
         query["pagination_token"] = pagination_token
@@ -940,6 +943,29 @@ def bookmarks(max_results: int = 100, pagination_token: str | None = None):
     includes = data.get("includes", {})
     users = {u["id"]: u for u in includes.get("users", [])}
     media = {m["media_key"]: m for m in includes.get("media", [])}
+    ref_posts = {t["id"]: t for t in includes.get("tweets", [])}
+
+    def media_of(tw: dict) -> list:
+        return [media[k] for k in (tw.get("attachments") or {}).get("media_keys", []) if k in media]
+
+    def referenced(tw: dict) -> list:
+        refs = []
+        for ref in tw.get("referenced_tweets") or []:
+            post = ref_posts.get(ref["id"], {})
+            author = users.get(post.get("author_id", ""), {})
+            refs.append({
+                "type": ref["type"],
+                "id": ref["id"],
+                "text": (post.get("note_tweet") or {}).get("text") or post.get("text"),
+                "created_at": post.get("created_at"),
+                "author_id": post.get("author_id"),
+                "author_username": author.get("username"),
+                "author_name": author.get("name"),
+                "author_avatar": author.get("profile_image_url"),
+                "media": media_of(post),
+            })
+        return refs
+
     items = []
     for tw in data.get("data", []):
         author = users.get(tw.get("author_id", ""), {})
@@ -958,8 +984,8 @@ def bookmarks(max_results: int = 100, pagination_token: str | None = None):
             "author_avatar": author.get("profile_image_url"),
             "public_metrics": tw.get("public_metrics"),
             "entities": tw.get("entities"),
-            "referenced_tweets": tw.get("referenced_tweets"),
-            "media": [media[k] for k in (tw.get("attachments") or {}).get("media_keys", []) if k in media],
+            "referenced_tweets": referenced(tw),
+            "media": media_of(tw),
         })
 
     return {"bookmarks": items, "next_token": data.get("meta", {}).get("next_token")}
