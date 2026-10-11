@@ -20,13 +20,18 @@ MASTER = "master-token-0123456789"
 
 
 class FakeResponse:
-    def __init__(self, status, body=None, headers=None):
+    """raw: a body that is not JSON, so json() raises like requests does."""
+
+    def __init__(self, status, body=None, headers=None, raw=None):
         self.status_code = status
         self._body = body if body is not None else {}
+        self._raw = raw
         self.headers = headers or {}
-        self.text = str(self._body)
+        self.text = raw if raw is not None else str(self._body)
 
     def json(self):
+        if self._raw is not None:
+            raise requests.exceptions.JSONDecodeError("Expecting value", self._raw, 0)
         return self._body
 
 
@@ -430,6 +435,94 @@ def test_failure_before_x_got_the_request_stays_retryable(client, env, failure):
     r = client.post("/xyz/posts", json=body, headers=auth())
     assert r.status_code == 200 and r.json()["id"] == "1977000000000000001"
     assert len(fake.tweets()) == 2
+
+
+# 2xx answers to the post that the gate cannot read: X may have published it.
+UNREADABLE_2XX = {
+    "200_invalid_json": FakeResponse(200, raw="<html>upstream</html>"),
+    "200_without_data_id": FakeResponse(200, {"data": {"text": "hi"}}),
+    "201_int_id": FakeResponse(201, {"data": {"id": 1977000000000000001}}),
+    "201_body_is_list": FakeResponse(201, [{"id": "1977000000000000001"}]),
+    "201_data_is_string": FakeResponse(201, {"data": "1977000000000000001"}),
+}
+
+
+@pytest.mark.parametrize("answer", UNREADABLE_2XX.values(), ids=UNREADABLE_2XX.keys())
+def test_unreadable_2xx_answer_is_maybe_posted_without_another_x_call(client, env, answer):
+    gate, fake = env
+    body = {"client_id": "draft-0016", "text": "hi"}
+    fake.fail["/tweets"] = answer
+    r = client.post("/xyz/posts", json=body, headers=auth())
+    assert r.status_code == 409 and r.json()["error"] == "maybe_posted"
+    assert post_row(gate, "draft-0016")["state"] == "unknown"
+    fake.fail.clear()
+    calls = len(fake.calls)
+    r = client.post("/xyz/posts", json=body, headers=auth())
+    assert r.status_code == 409 and r.json()["error"] == "maybe_posted"
+    assert len(fake.calls) == calls
+
+
+@pytest.mark.parametrize(
+    "answer,http,code,state",
+    [
+        (FakeResponse(503, ["upstream"]), 409, "maybe_posted", "unknown"),
+        (FakeResponse(500, {"errors": 7}), 409, "maybe_posted", "unknown"),
+        (FakeResponse(400, {"detail": {"nested": 1}}), 422, "x_rejected", "failed"),
+    ],
+    ids=["503_list_body", "500_errors_not_a_list", "400_detail_not_text"],
+)
+def test_odd_error_body_keeps_the_error_code(client, env, answer, http, code, state):
+    gate, fake = env
+    fake.fail["/tweets"] = answer
+    r = client.post("/xyz/posts", json={"client_id": "draft-0017", "text": "hi"}, headers=auth())
+    assert r.status_code == http and r.json()["error"] == code
+    assert post_row(gate, "draft-0017")["state"] == state
+
+
+def test_unexpected_failure_in_the_x_call_is_maybe_posted(client, env):
+    gate, fake = env
+    body = {"client_id": "draft-0018", "text": "hi"}
+    fake.tweet_raises = RuntimeError("not a requests error")
+    r = client.post("/xyz/posts", json=body, headers=auth())
+    assert r.status_code == 409 and r.json()["error"] == "maybe_posted"
+    assert post_row(gate, "draft-0018")["state"] == "unknown"
+    fake.tweet_raises = None
+    r = client.post("/xyz/posts", json=body, headers=auth())
+    assert r.status_code == 409 and r.json()["error"] == "maybe_posted"
+    assert len(fake.tweets()) == 1
+
+
+def test_unreadable_2xx_answer_on_media_stays_retryable(client, env):
+    _, fake = env
+    garbage = FakeResponse(200, raw="<html>upstream</html>")
+    init = {"media_type": "video/mp4", "total_bytes": 4}
+    for bad in (garbage, FakeResponse(200, {"data": {"id": "1", "expires_after_secs": "soon"}})):
+        fake.fail["/media/upload/initialize"] = bad
+        r = client.post("/xyz/media", json=init, headers=auth())
+        assert r.status_code == 502 and r.json()["error"] == "x_server_error"
+    fake.fail.clear()
+    media_id = client.post("/xyz/media", json=init, headers=auth()).json()["media_id"]
+    assert client.put(f"/xyz/media/{media_id}/segments/0", content=b"vvvv", headers=auth()).status_code == 200
+    fake.status_states = ["succeeded"]  # finalize answers pending, then STATUS answers succeeded
+    finalize = lambda: client.post(f"/xyz/media/{media_id}/finalize", headers=auth())  # noqa: E731
+    status = lambda: client.get(f"/xyz/media/{media_id}", headers=auth())  # noqa: E731
+    fake.fail[f"/media/upload/{media_id}/finalize"] = garbage
+    r = finalize()
+    assert r.status_code == 502 and r.json()["error"] == "x_server_error"
+    fake.fail.clear()
+    assert finalize().json()["state"] == "pending"
+    for bad in (
+        garbage,
+        FakeResponse(200, {"data": {"processing_info": "pending"}}),
+        FakeResponse(200, {"data": {"processing_info": {"state": {"x": 1}}}}),
+    ):
+        fake.fail["/media/upload"] = bad
+        r = status()
+        assert r.status_code == 502 and r.json()["error"] == "x_server_error", bad.text
+        fake.fail.clear()
+    assert status().json()["state"] == "succeeded"
+    r = client.post("/xyz/posts", json={"client_id": "draft-0019", "media_ids": [media_id]}, headers=auth())
+    assert r.status_code == 200 and r.json()["id"] == "1977000000000000001"
 
 
 def test_answer_without_id_and_lost_request_are_maybe_posted(client, env):
