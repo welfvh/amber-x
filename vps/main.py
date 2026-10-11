@@ -61,6 +61,13 @@ def verify_token(request: Request):
 app = FastAPI(title="x-vibepoastry", version="1.0.0", dependencies=[Depends(verify_token)])
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:3131"], allow_methods=["*"], allow_headers=["*"])
 
+# xyz, the Light Phone III tool: post only (media upload + create post), with
+# its own tokens. A mounted app sits outside verify_token, and its tokens open
+# nothing else here. See xyz_gate.py.
+from xyz_gate import xyz_app  # noqa: E402
+
+app.mount("/xyz", xyz_app)
+
 # ── tweepy clients ────────────────────────────────────────────
 
 def get_v2_client():
