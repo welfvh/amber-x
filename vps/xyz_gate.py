@@ -16,6 +16,12 @@ The phone retries a post until it gets a post id, so /posts is idempotent per
 client_id: a retry of a post that went out returns the same id. A client_id
 names one post: a retry with other text or media gets client_id_reused.
 
+If the request reached X but the answer got lost, X may have published the
+post. That outcome is sticky: the gate never sends this client_id to X again,
+and every try answers maybe_posted, whatever its text or media. A person checks
+the profile and, if the post is missing, posts it again as a new draft (a new
+client_id).
+
 Errors answer {"error": <code>, "detail": <text>}. The phone retries only
 x_unreachable, x_server_error, x_rate_limited and in_flight; every other code
 needs a person (bad token, X credits at zero, X rejected the post).
@@ -41,6 +47,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from requests_oauthlib import OAuth1
 from starlette.concurrency import run_in_threadpool
+from urllib3.exceptions import NewConnectionError
 
 log = logging.getLogger("x-vibepoastry.xyz")
 
@@ -65,7 +72,7 @@ MAX_POSTS_PER_DAY = 50  # a stolen phone token cannot flood the account
 # Media initialized per UTC day, per token. The dry-run token uploads to X for
 # real too, so it has its own count with the same limit.
 MAX_MEDIA_PER_DAY = 200
-POSTING_STALE_S = 180  # a "posting" row older than this lost its request
+POSTING_STALE_S = 180  # a "posting" row older than this lost its request: X may have posted it
 
 CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9-]{8,64}$")
 MEDIA_ID_RE = re.compile(r"^[0-9]{1,30}$")
@@ -191,12 +198,28 @@ def _x_message(resp: requests.Response) -> str:
     return "; ".join(p for p in parts if p)[:300] or f"HTTP {resp.status_code}"
 
 
+def _never_reached_x(exc: Optional[BaseException]) -> bool:
+    """True only if the request certainly never reached X.
+
+    Two transport failures happen before the gate sends a byte: the TCP
+    connect timed out (requests.ConnectTimeout), or the connection never
+    opened (urllib3 NewConnectionError: refused, unreachable, DNS failure).
+    Every other failure may come after X got the request: a read timeout, a
+    reset or a TLS error mid-answer, a broken chunked answer. When in doubt,
+    the request reached X."""
+    if isinstance(exc, requests.ConnectTimeout):
+        return True
+    reason = getattr(exc.args[0], "reason", None) if isinstance(exc, requests.ConnectionError) and exc.args else None
+    return isinstance(reason, NewConnectionError)
+
+
 def _x_call(method: str, path: str, **kwargs) -> requests.Response:
-    """X call with X's failures mapped to gate errors. Returns only 2xx."""
+    """X call with X's failures mapped to gate errors. Returns only 2xx.
+    A transport failure raises x_unreachable from the requests exception."""
     try:
         resp = x_request(method, path, **kwargs)
     except requests.RequestException as e:
-        raise GateError(503, "x_unreachable", type(e).__name__)
+        raise GateError(503, "x_unreachable", type(e).__name__) from e
     if 200 <= resp.status_code < 300:
         return resp
     msg = _x_message(resp)
@@ -458,8 +481,12 @@ def create_post(body: PostIn, dry_run: bool = Depends(require_token)):
             return _post_out(row["tweet_id"], dry_run)
         if row is not None and row["state"] == "posting" and now - row["updated_at"] < POSTING_STALE_S:
             raise GateError(409, "in_flight", "this post is being sent")
+        # An uncertain outcome is sticky. Every state but failed means X may
+        # have this post (unknown, or a posting row that lost its request), so
+        # the gate never calls X again for it and leaves the row as it is.
+        if row is not None and row["state"] != "failed":
+            raise _maybe_posted()
         _validate_post(body, dry_run)
-        uncertain = row is not None and row["state"] in ("unknown", "posting")
         with _db() as db:
             # The limit applies to every attempt that calls X, also to retries.
             if not dry_run and _today_count(db, body.client_id) >= MAX_POSTS_PER_DAY:
@@ -492,21 +519,24 @@ def create_post(body: PostIn, dry_run: bool = Depends(require_token)):
     try:
         resp = _x_call("POST", "/tweets", json=payload)
     except GateError as e:
-        if e.code == "x_unreachable":
-            finish("unknown", error=e.detail)  # X may have posted it
-        elif e.code == "x_duplicate" and uncertain:
-            finish("maybe_posted", error=e.detail)
-            raise GateError(409, "maybe_posted", "X has a post with this text already: an earlier try may have posted it")
-        else:
-            finish("failed", error=f"{e.code}: {e.detail}")
+        if e.code == "x_unreachable" and not _never_reached_x(e.__cause__):
+            finish("unknown", error=e.detail)
+            raise _maybe_posted() from e
+        # X answered with an error (5xx too), or the request never reached X:
+        # the row fails, and a retry may call X again.
+        finish("failed", error=f"{e.code}: {e.detail}")
         raise
     tweet_id = str((resp.json().get("data") or {}).get("id") or "")
     if not tweet_id:
         finish("unknown", error="X answered without a post id")
-        raise GateError(502, "x_server_error", "X answered without a post id")
+        raise _maybe_posted()
     finish("posted", tweet_id)
     log.info("xyz: posted %s for client %s", tweet_id, body.client_id)
     return _post_out(tweet_id, False)
+
+
+def _maybe_posted() -> GateError:
+    return GateError(409, "maybe_posted", "X may have this post: the answer got lost. Check the profile")
 
 
 def _post_out(tweet_id: str, dry_run: bool) -> dict:

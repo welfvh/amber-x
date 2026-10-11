@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 import requests
 from fastapi.testclient import TestClient
+from urllib3.exceptions import MaxRetryError, NameResolutionError, NewConnectionError, ProtocolError
 
 VPS = Path(__file__).resolve().parents[1]
 POST_TOKEN = "post-token-0123456789"
@@ -288,16 +289,111 @@ def test_failed_post_can_be_retried(client, env):
     assert len(fake.tweets()) == 2
 
 
-def test_lost_answer_then_duplicate_means_maybe_posted(client, env):
-    _, fake = env
-    body = {"client_id": "draft-0006", "text": "did it go out?"}
-    fake.tweet_raises = requests.ReadTimeout()
-    r = client.post("/xyz/posts", json=body, headers=auth())
-    assert r.status_code == 503 and r.json()["error"] == "x_unreachable"
-    fake.tweet_raises = None
-    fake.tweet_status, fake.tweet_body = 403, {"detail": "You are not allowed to create a Tweet with duplicate content."}
+def post_row(gate, client_id):
+    with gate._db() as db:
+        return dict(db.execute("SELECT * FROM posts WHERE client_id=?", (client_id,)).fetchone())
+
+
+def _refused():
+    return requests.ConnectionError(MaxRetryError(None, "/2/tweets", NewConnectionError(None, "Connection refused")))
+
+
+def _no_dns():
+    return requests.ConnectionError(MaxRetryError(None, "/2/tweets", NameResolutionError("api.x.com", None, OSError())))
+
+
+# Transport failures that may come after X got the request: X may have posted.
+AFTER_SEND = {
+    "read_timeout": requests.ReadTimeout,
+    "reset_mid_answer": lambda: requests.ConnectionError(ProtocolError("Connection aborted.", ConnectionResetError())),
+    "broken_chunks": requests.exceptions.ChunkedEncodingError,
+    "tls_error": requests.exceptions.SSLError,
+    "bare_connection_error": requests.ConnectionError,
+}
+# Transport failures before the gate sent a byte: X never got the request.
+BEFORE_SEND = {"connect_timeout": requests.ConnectTimeout, "refused": _refused, "no_dns": _no_dns}
+
+
+@pytest.mark.parametrize("failure", AFTER_SEND.values(), ids=AFTER_SEND.keys())
+def test_media_only_lost_answer_is_maybe_posted_without_another_x_call(client, env, failure):
+    gate, fake = env
+    media_id, _ = upload(client, b"img")
+    # no text, so X cannot refuse a second copy as a duplicate
+    body = {"client_id": "draft-0006", "media_ids": [media_id]}
+    fake.tweet_raises = failure()
     r = client.post("/xyz/posts", json=body, headers=auth())
     assert r.status_code == 409 and r.json()["error"] == "maybe_posted"
+    assert post_row(gate, "draft-0006")["state"] == "unknown"
+    fake.tweet_raises = None
+    calls = len(fake.calls)
+    r = client.post("/xyz/posts", json=body, headers=auth())
+    assert r.status_code == 409 and r.json()["error"] == "maybe_posted"
+    assert len(fake.calls) == calls
+
+
+def test_lost_answer_then_changed_content_keeps_the_row(client, env):
+    gate, fake = env
+    media_id, _ = upload(client, b"img")
+    other, _ = upload(client, b"other")
+    body = {"client_id": "draft-0007", "text": "first words", "media_ids": [media_id]}
+    fake.tweet_raises = requests.ReadTimeout()
+    assert client.post("/xyz/posts", json=body, headers=auth()).json()["error"] == "maybe_posted"
+    fake.tweet_raises = None
+    before = post_row(gate, "draft-0007")
+    for changed in ({**body, "text": "edited", "media_ids": [other]}, {**body, "text": ""}, {**body, "media_ids": []}):
+        r = client.post("/xyz/posts", json=changed, headers=auth())
+        assert r.status_code == 409 and r.json()["error"] == "maybe_posted", changed
+    assert post_row(gate, "draft-0007") == before
+    assert len(fake.tweets()) == 1
+
+
+def test_maybe_posted_is_sticky_and_counts_toward_the_daily_limit(client, env):
+    gate, fake = env
+    gate.MAX_POSTS_PER_DAY = 1
+    body = {"client_id": "draft-0008", "text": "did it go out?"}
+    fake.tweet_raises = requests.ReadTimeout()
+    for _ in range(3):
+        r = client.post("/xyz/posts", json=body, headers=auth())
+        assert r.status_code == 409 and r.json()["error"] == "maybe_posted"
+        fake.tweet_raises = None  # X answers again, but the gate does not ask
+    assert post_row(gate, "draft-0008")["state"] == "unknown"
+    # X may have published it, so it uses the only post of the day
+    r = client.post("/xyz/posts", json={"client_id": "draft-0009", "text": "next"}, headers=auth())
+    assert r.status_code == 429 and r.json()["error"] == "daily_limit"
+    assert len(fake.tweets()) == 1
+
+
+@pytest.mark.parametrize("failure", BEFORE_SEND.values(), ids=BEFORE_SEND.keys())
+def test_failure_before_x_got_the_request_stays_retryable(client, env, failure):
+    gate, fake = env
+    media_id, _ = upload(client, b"img")
+    body = {"client_id": "draft-0010", "media_ids": [media_id]}
+    fake.tweet_raises = failure()
+    r = client.post("/xyz/posts", json=body, headers=auth())
+    assert r.status_code == 503 and r.json()["error"] == "x_unreachable"
+    assert post_row(gate, "draft-0010")["state"] == "failed"
+    fake.tweet_raises = None
+    r = client.post("/xyz/posts", json=body, headers=auth())
+    assert r.status_code == 200 and r.json()["id"] == "1977000000000000001"
+    assert len(fake.tweets()) == 2
+
+
+def test_answer_without_id_and_lost_request_are_maybe_posted(client, env):
+    gate, fake = env
+    fake.tweet_body = {"data": {}}
+    r = client.post("/xyz/posts", json={"client_id": "draft-0011", "text": "a"}, headers=auth())
+    assert r.status_code == 409 and r.json()["error"] == "maybe_posted"
+    # a posting row whose request never finished (the gate restarted mid-call)
+    old = gate.time.time() - gate.POSTING_STALE_S - 1
+    with gate._db() as db:
+        db.execute(
+            "INSERT INTO posts (client_id, state, media_ids, text_sha256, created_at, updated_at, dry_run)"
+            " VALUES ('draft-0012', 'posting', '[]', 'x', ?, ?, 0)",
+            (old, old),
+        )
+    r = client.post("/xyz/posts", json={"client_id": "draft-0012", "text": "b"}, headers=auth())
+    assert r.status_code == 409 and r.json()["error"] == "maybe_posted"
+    assert len(fake.tweets()) == 1
 
 
 def test_daily_limit(client, env):
