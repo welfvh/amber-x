@@ -265,7 +265,6 @@ def test_post_rules(client, env):
     [
         (402, {"title": "Payment Required"}, "x_credits_empty", 402),
         (429, {"title": "Too Many Requests"}, "x_rate_limited", 429),
-        (503, {"title": "Service Unavailable"}, "x_server_error", 502),
         (403, {"detail": "You are not allowed to create a Tweet with duplicate content."}, "x_duplicate", 409),
         (403, {"detail": "You are not permitted to perform this action."}, "x_forbidden", 403),
         (400, {"errors": [{"message": "Your media IDs are invalid."}]}, "x_rejected", 422),
@@ -360,6 +359,61 @@ def test_maybe_posted_is_sticky_and_counts_toward_the_daily_limit(client, env):
     # X may have published it, so it uses the only post of the day
     r = client.post("/xyz/posts", json={"client_id": "draft-0009", "text": "next"}, headers=auth())
     assert r.status_code == 429 and r.json()["error"] == "daily_limit"
+    assert len(fake.tweets()) == 1
+
+
+@pytest.mark.parametrize(
+    "status,media_only",
+    [(500, True), (502, True), (503, False), (504, False)],
+    ids=["500_media_only", "502_proxy_media_only", "503_text", "504_proxy_text"],
+)
+def test_x_server_error_on_post_is_maybe_posted_without_another_x_call(client, env, status, media_only):
+    gate, fake = env
+    gate.MAX_POSTS_PER_DAY = 1
+    if media_only:
+        media_id, _ = upload(client, b"img")
+        body = {"client_id": "draft-0013", "media_ids": [media_id]}
+    else:
+        body = {"client_id": "draft-0013", "text": "hi"}
+    # X (or a proxy in front of it) may fail after X published the post
+    fake.tweet_status, fake.tweet_body = status, {"title": "Server Error"}
+    r = client.post("/xyz/posts", json=body, headers=auth())
+    assert r.status_code == 409 and r.json()["error"] == "maybe_posted"
+    assert post_row(gate, "draft-0013")["state"] == "unknown"
+    fake.tweet_status, fake.tweet_body = 201, None
+    calls = len(fake.calls)
+    r = client.post("/xyz/posts", json=body, headers=auth())
+    assert r.status_code == 409 and r.json()["error"] == "maybe_posted"
+    assert len(fake.calls) == calls
+    # X may have published it, so it uses the only post of the day
+    r = client.post("/xyz/posts", json={"client_id": "draft-0014", "text": "next"}, headers=auth())
+    assert r.status_code == 429 and r.json()["error"] == "daily_limit"
+    assert len(fake.tweets()) == 1
+
+
+def test_x_server_error_on_media_stays_retryable(client, env):
+    _, fake = env
+    x500 = FakeResponse(500, {"title": "Internal Server Error"})
+    init = {"media_type": "video/mp4", "total_bytes": 4}
+    fake.fail["/media/upload/initialize"] = x500
+    r = client.post("/xyz/media", json=init, headers=auth())
+    assert r.status_code == 502 and r.json()["error"] == "x_server_error"
+    fake.fail.clear()
+    media_id = client.post("/xyz/media", json=init, headers=auth()).json()["media_id"]
+    fake.status_states = ["succeeded"]  # finalize answers pending, then STATUS answers succeeded
+    for prefix, call in (
+        (f"/media/upload/{media_id}/append", lambda: client.put(f"/xyz/media/{media_id}/segments/0", content=b"vvvv", headers=auth())),
+        (f"/media/upload/{media_id}/finalize", lambda: client.post(f"/xyz/media/{media_id}/finalize", headers=auth())),
+        ("/media/upload", lambda: client.get(f"/xyz/media/{media_id}", headers=auth())),
+    ):
+        fake.fail[prefix] = x500
+        r = call()
+        assert r.status_code == 502 and r.json()["error"] == "x_server_error", prefix
+        fake.fail.clear()
+        assert call().status_code == 200, prefix
+    assert client.get(f"/xyz/media/{media_id}", headers=auth()).json()["state"] == "succeeded"
+    r = client.post("/xyz/posts", json={"client_id": "draft-0015", "media_ids": [media_id]}, headers=auth())
+    assert r.status_code == 200 and r.json()["id"] == "1977000000000000001"
     assert len(fake.tweets()) == 1
 
 

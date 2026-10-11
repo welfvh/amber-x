@@ -17,14 +17,16 @@ client_id: a retry of a post that went out returns the same id. A client_id
 names one post: a retry with other text or media gets client_id_reused.
 
 If the request reached X but the answer got lost, X may have published the
-post. That outcome is sticky: the gate never sends this client_id to X again,
-and every try answers maybe_posted, whatever its text or media. A person checks
-the profile and, if the post is missing, posts it again as a new draft (a new
-client_id).
+post. A 5xx answer to the post is the same: X (or a proxy in front of it) may
+fail after X published the post. That outcome is sticky: the gate never sends
+this client_id to X again, and every try answers maybe_posted, whatever its
+text or media. A person checks the profile and, if the post is missing, posts
+it again as a new draft (a new client_id).
 
 Errors answer {"error": <code>, "detail": <text>}. The phone retries only
 x_unreachable, x_server_error, x_rate_limited and in_flight; every other code
-needs a person (bad token, X credits at zero, X rejected the post).
+needs a person (bad token, X credits at zero, X rejected the post). Only the
+media endpoints answer x_server_error: a repeated upload publishes nothing.
 """
 
 import hashlib
@@ -519,11 +521,12 @@ def create_post(body: PostIn, dry_run: bool = Depends(require_token)):
     try:
         resp = _x_call("POST", "/tweets", json=payload)
     except GateError as e:
-        if e.code == "x_unreachable" and not _never_reached_x(e.__cause__):
-            finish("unknown", error=e.detail)
+        # A lost answer or a 5xx answer: X may have published the post.
+        if e.code == "x_server_error" or (e.code == "x_unreachable" and not _never_reached_x(e.__cause__)):
+            finish("unknown", error=f"{e.code}: {e.detail}")
             raise _maybe_posted() from e
-        # X answered with an error (5xx too), or the request never reached X:
-        # the row fails, and a retry may call X again.
+        # X refused the post (4xx), or the request never reached X: the row
+        # fails, and a retry may call X again.
         finish("failed", error=f"{e.code}: {e.detail}")
         raise
     tweet_id = str((resp.json().get("data") or {}).get("id") or "")
@@ -536,7 +539,7 @@ def create_post(body: PostIn, dry_run: bool = Depends(require_token)):
 
 
 def _maybe_posted() -> GateError:
-    return GateError(409, "maybe_posted", "X may have this post: the answer got lost. Check the profile")
+    return GateError(409, "maybe_posted", "X may have this post: its answer got lost or failed. Check the profile")
 
 
 def _post_out(tweet_id: str, dry_run: bool) -> dict:
