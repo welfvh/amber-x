@@ -18,7 +18,8 @@ names one post: a retry with other text or media gets client_id_reused.
 
 If the request reached X but the answer got lost, X may have published the
 post. A 5xx answer to the post is the same: X (or a proxy in front of it) may
-fail after X published the post. That outcome is sticky: the gate never sends
+fail after X published the post. So is a 2xx answer that the gate cannot read
+(not JSON, or no post id in it). That outcome is sticky: the gate never sends
 this client_id to X again, and every try answers maybe_posted, whatever its
 text or media. A person checks the profile and, if the post is missing, posts
 it again as a new draft (a new client_id).
@@ -78,6 +79,7 @@ POSTING_STALE_S = 180  # a "posting" row older than this lost its request: X may
 
 CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9-]{8,64}$")
 MEDIA_ID_RE = re.compile(r"^[0-9]{1,30}$")
+POST_ID_RE = re.compile(r"^[0-9]{1,30}$")
 
 
 class GateError(Exception):
@@ -190,14 +192,16 @@ def x_request(method: str, path: str, **kwargs) -> requests.Response:
 
 
 def _x_message(resp: requests.Response) -> str:
+    # An error body of an odd shape must not hide X's status code, so any
+    # failure to read it falls back to the raw text.
     try:
         body = resp.json()
-    except ValueError:
-        return resp.text[:300]
-    errors = body.get("errors") or []
-    parts = [body.get("detail") or body.get("title") or ""]
-    parts += [e.get("message") or e.get("detail") or "" for e in errors if isinstance(e, dict)]
-    return "; ".join(p for p in parts if p)[:300] or f"HTTP {resp.status_code}"
+        errors = body.get("errors") or []
+        parts = [body.get("detail") or body.get("title") or ""]
+        parts += [e.get("message") or e.get("detail") or "" for e in errors if isinstance(e, dict)]
+        return "; ".join(p for p in parts if p)[:300] or f"HTTP {resp.status_code}"
+    except Exception:
+        return resp.text[:300] or f"HTTP {resp.status_code}"
 
 
 def _never_reached_x(exc: Optional[BaseException]) -> bool:
@@ -245,13 +249,28 @@ def _x_call(method: str, path: str, **kwargs) -> requests.Response:
     raise GateError(422, "x_rejected", msg)
 
 
+@contextmanager
+def _media_answer(what: str):
+    """Wraps the reading of a 2xx answer to a media call. If the body is not
+    JSON or has an odd shape, the call answers x_server_error. A repeated
+    media call publishes nothing, so the phone may retry."""
+    try:
+        yield
+    except Exception as e:
+        log.warning("xyz: X answered %s with a body the gate cannot read: %r", what, e)
+        raise GateError(502, "x_server_error", f"X answered {what} with a body the gate cannot read") from e
+
+
 def _processing(data: dict) -> dict:
-    """The phone's view of X's processing_info."""
+    """The phone's view of X's processing_info. Raises if it has an odd shape."""
     info = (data or {}).get("processing_info")
     if not info:
         return {"state": "succeeded", "check_after_secs": 0, "progress": 100}
+    state = info.get("state", "pending")
+    if not isinstance(state, str):
+        raise TypeError("processing state is not text")
     out = {
-        "state": info.get("state", "pending"),
+        "state": state,
         "check_after_secs": int(info.get("check_after_secs") or 0),
         "progress": int(info.get("progress_percent") or 0),
     }
@@ -343,12 +362,13 @@ def media_init(body: MediaInit, dry_run: bool = Depends(require_token)):
             "/media/upload/initialize",
             json={"media_type": body.media_type, "total_bytes": body.total_bytes, "media_category": category},
         )
-        data = resp.json().get("data") or {}
-        media_id = str(data.get("id") or "")
+        with _media_answer("initialize"):
+            data = resp.json().get("data") or {}
+            media_id = str(data.get("id") or "")
+            ttl = min(int(data.get("expires_after_secs") or 86400), 86400) - 3600
         if not MEDIA_ID_RE.match(media_id):
             raise GateError(502, "x_server_error", "X returned no media id")
         now = time.time()
-        ttl = min(int(data.get("expires_after_secs") or 86400), 86400) - 3600
         expires_at = now + max(ttl, 3600)
         with _db_lock, _db() as db:
             db.execute(
@@ -410,7 +430,8 @@ def media_finalize(media_id: str, dry_run: bool = Depends(require_token)):
         raise GateError(409, "media_incomplete", f"received {received} of {row['total_bytes']} bytes")
     if row["state"] == "uploading":
         resp = _x_call("POST", f"/media/upload/{media_id}/finalize")
-        status = _processing(resp.json().get("data") or {})
+        with _media_answer("finalize"):
+            status = _processing(resp.json().get("data") or {})
         with _db_lock, _db() as db:
             db.execute("UPDATE media SET state=? WHERE media_id=?", (status["state"], media_id))
         log.info("xyz: media %s finalized: %s", media_id, status["state"])
@@ -426,7 +447,8 @@ def media_status(media_id: str, dry_run: bool = Depends(require_token)):
     if row["state"] in ("succeeded", "failed"):
         return {"state": row["state"], "check_after_secs": 0, "progress": 100}
     resp = _x_call("GET", "/media/upload", params={"command": "STATUS", "media_id": media_id})
-    status = _processing(resp.json().get("data") or {})
+    with _media_answer("status"):
+        status = _processing(resp.json().get("data") or {})
     if status["state"] in ("succeeded", "failed"):
         with _db_lock, _db() as db:
             db.execute("UPDATE media SET state=? WHERE media_id=?", (status["state"], media_id))
@@ -529,13 +551,32 @@ def create_post(body: PostIn, dry_run: bool = Depends(require_token)):
         # fails, and a retry may call X again.
         finish("failed", error=f"{e.code}: {e.detail}")
         raise
-    tweet_id = str((resp.json().get("data") or {}).get("id") or "")
-    if not tweet_id:
-        finish("unknown", error="X answered without a post id")
+    except Exception as e:
+        # A failure the gate does not know: it cannot prove that X never got
+        # the request.
+        log.exception("xyz: post %s: unexpected failure in the X call", body.client_id)
+        finish("unknown", error=f"unexpected: {type(e).__name__}")
+        raise _maybe_posted() from e
+    # X answered 2xx, so X may have published the post, whatever the body says.
+    tweet_id = _post_id(resp)
+    if tweet_id is None:
+        log.warning("xyz: post %s: X answered %s without a readable post id", body.client_id, resp.status_code)
+        finish("unknown", error=f"X answered {resp.status_code} without a readable post id")
         raise _maybe_posted()
     finish("posted", tweet_id)
     log.info("xyz: posted %s for client %s", tweet_id, body.client_id)
     return _post_out(tweet_id, False)
+
+
+def _post_id(resp: requests.Response) -> Optional[str]:
+    """The post id in a 2xx answer to POST /2/tweets, or None if the gate
+    cannot read one: the body is not JSON, has no data.id, or the id is not
+    a string of digits."""
+    try:
+        post_id = resp.json()["data"]["id"]
+    except Exception:
+        return None
+    return post_id if isinstance(post_id, str) and POST_ID_RE.match(post_id) else None
 
 
 def _maybe_posted() -> GateError:
