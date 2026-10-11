@@ -13,7 +13,8 @@ Tokens: the service holds only SHA-256 hashes of them.
                            dry_run: true and no post id).
 
 The phone retries a post until it gets a post id, so /posts is idempotent per
-client_id: a retry of a post that went out returns the same id.
+client_id: a retry of a post that went out returns the same id. A client_id
+names one post: a retry with other text or media gets client_id_reused.
 
 Errors answer {"error": <code>, "detail": <text>}. The phone retries only
 x_unreachable, x_server_error, x_rate_limited and in_flight; every other code
@@ -61,6 +62,9 @@ CHUNK_BYTES = 4 * 1024 * 1024  # what the phone sends per segment
 MAX_SEGMENTS = 1000
 MAX_TEXT_CHARS = 25_000  # @_welf is Premium (long posts)
 MAX_POSTS_PER_DAY = 50  # a stolen phone token cannot flood the account
+# Media initialized per UTC day, per token. The dry-run token uploads to X for
+# real too, so it has its own count with the same limit.
+MAX_MEDIA_PER_DAY = 200
 POSTING_STALE_S = 180  # a "posting" row older than this lost its request
 
 CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9-]{8,64}$")
@@ -285,6 +289,13 @@ def ping(dry_run: bool = Depends(require_token)):
     return {"ok": True, "dry_run": dry_run, "chunk_bytes": CHUNK_BYTES}
 
 
+def _utc_day_start() -> float:
+    return datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+
+
+_media_init_lock = threading.Lock()
+
+
 @xyz_app.post("/media")
 def media_init(body: MediaInit, dry_run: bool = Depends(require_token)):
     category = MEDIA_TYPES.get(body.media_type)
@@ -293,24 +304,33 @@ def media_init(body: MediaInit, dry_run: bool = Depends(require_token)):
     limit = MAX_VIDEO_BYTES if category == "tweet_video" else MAX_IMAGE_BYTES
     if not 0 < body.total_bytes <= limit:
         raise GateError(413, "media_too_large", f"{body.media_type} must be 1..{limit} bytes")
-    resp = _x_call(
-        "POST",
-        "/media/upload/initialize",
-        json={"media_type": body.media_type, "total_bytes": body.total_bytes, "media_category": category},
-    )
-    data = resp.json().get("data") or {}
-    media_id = str(data.get("id") or "")
-    if not MEDIA_ID_RE.match(media_id):
-        raise GateError(502, "x_server_error", "X returned no media id")
-    now = time.time()
-    ttl = min(int(data.get("expires_after_secs") or 86400), 86400) - 3600
-    expires_at = now + max(ttl, 3600)
-    with _db_lock, _db() as db:
-        db.execute(
-            "INSERT OR REPLACE INTO media (media_id, media_type, total_bytes, created_at, expires_at, dry_run)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (media_id, body.media_type, body.total_bytes, now, expires_at, int(dry_run)),
+    # The lock covers the count, the X call and the insert, so parallel
+    # requests cannot pass the daily limit together.
+    with _media_init_lock:
+        with _db() as db:
+            count = db.execute(
+                "SELECT COUNT(*) FROM media WHERE dry_run=? AND created_at>=?", (int(dry_run), _utc_day_start())
+            ).fetchone()[0]
+        if count >= MAX_MEDIA_PER_DAY:
+            raise GateError(429, "daily_media_limit", f"at most {MAX_MEDIA_PER_DAY} uploads per day")
+        resp = _x_call(
+            "POST",
+            "/media/upload/initialize",
+            json={"media_type": body.media_type, "total_bytes": body.total_bytes, "media_category": category},
         )
+        data = resp.json().get("data") or {}
+        media_id = str(data.get("id") or "")
+        if not MEDIA_ID_RE.match(media_id):
+            raise GateError(502, "x_server_error", "X returned no media id")
+        now = time.time()
+        ttl = min(int(data.get("expires_after_secs") or 86400), 86400) - 3600
+        expires_at = now + max(ttl, 3600)
+        with _db_lock, _db() as db:
+            db.execute(
+                "INSERT OR REPLACE INTO media (media_id, media_type, total_bytes, created_at, expires_at, dry_run)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (media_id, body.media_type, body.total_bytes, now, expires_at, int(dry_run)),
+            )
     log.info("xyz: media %s initialized (%s, %d bytes, dry_run=%s)", media_id, body.media_type, body.total_bytes, dry_run)
     return {"media_id": media_id, "expires_at": int(expires_at), "chunk_bytes": CHUNK_BYTES}
 
@@ -388,16 +408,18 @@ def media_status(media_id: str, dry_run: bool = Depends(require_token)):
     return status
 
 
-def _today_count(db: sqlite3.Connection) -> int:
-    start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+def _today_count(db: sqlite3.Connection, client_id: str) -> int:
+    """Real posts that count against today's limit: every row of this UTC day
+    that X may have published (all states but failed), and every request in
+    flight. The row of client_id does not count against itself."""
     return db.execute(
-        "SELECT COUNT(*) FROM posts WHERE dry_run=0 AND state='posted' AND updated_at>=?", (start,)
+        "SELECT COUNT(*) FROM posts WHERE dry_run=0 AND client_id!=?"
+        " AND ((state!='failed' AND updated_at>=?) OR (state='posting' AND updated_at>=?))",
+        (client_id, _utc_day_start(), time.time() - POSTING_STALE_S),
     ).fetchone()[0]
 
 
 def _validate_post(body: PostIn, dry_run: bool) -> None:
-    if not CLIENT_ID_RE.match(body.client_id):
-        raise GateError(422, "bad_client_id", "client_id must be 8-64 letters, digits or dashes")
     if not body.text.strip() and not body.media_ids:
         raise GateError(422, "empty_post", "a post needs text or media")
     if len(body.text) > MAX_TEXT_CHARS:
@@ -419,20 +441,28 @@ _post_lock = threading.Lock()
 
 @xyz_app.post("/posts")
 def create_post(body: PostIn, dry_run: bool = Depends(require_token)):
-    _validate_post(body, dry_run)
-    now = time.time()
+    if not CLIENT_ID_RE.match(body.client_id):
+        raise GateError(422, "bad_client_id", "client_id must be 8-64 letters, digits or dashes")
     text_sha = hashlib.sha256(body.text.encode()).hexdigest()
     with _post_lock:
+        now = time.time()
         with _db() as db:
             row = db.execute("SELECT * FROM posts WHERE client_id=?", (body.client_id,)).fetchone()
-            if row is not None and bool(row["dry_run"]) != dry_run:
-                raise GateError(409, "bad_client_id", "client_id belongs to another token")
-            if row is not None and row["state"] == "posted":
-                return _post_out(row["tweet_id"], dry_run)
-            if row is not None and row["state"] == "posting" and now - row["updated_at"] < POSTING_STALE_S:
-                raise GateError(409, "in_flight", "this post is being sent")
-            uncertain = row is not None and row["state"] in ("unknown", "posting")
-            if not dry_run and row is None and _today_count(db) >= MAX_POSTS_PER_DAY:
+        if row is not None and bool(row["dry_run"]) != dry_run:
+            raise GateError(409, "bad_client_id", "client_id belongs to another token")
+        # A retry of a post that went out gets its id before the media checks:
+        # the media may have expired since.
+        if row is not None and row["state"] == "posted":
+            if row["text_sha256"] != text_sha or json.loads(row["media_ids"]) != body.media_ids:
+                raise GateError(409, "client_id_reused", "this client_id already posted other text or media")
+            return _post_out(row["tweet_id"], dry_run)
+        if row is not None and row["state"] == "posting" and now - row["updated_at"] < POSTING_STALE_S:
+            raise GateError(409, "in_flight", "this post is being sent")
+        _validate_post(body, dry_run)
+        uncertain = row is not None and row["state"] in ("unknown", "posting")
+        with _db() as db:
+            # The limit applies to every attempt that calls X, also to retries.
+            if not dry_run and _today_count(db, body.client_id) >= MAX_POSTS_PER_DAY:
                 raise GateError(429, "daily_limit", f"at most {MAX_POSTS_PER_DAY} posts per day")
             db.execute(
                 "INSERT INTO posts (client_id, state, media_ids, text_sha256, created_at, updated_at, dry_run)"

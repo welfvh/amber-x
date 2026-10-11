@@ -310,3 +310,75 @@ def test_daily_limit(client, env):
     assert r.status_code == 429 and r.json()["error"] == "daily_limit"
     # a retry of a post that already went out still answers
     assert client.post("/xyz/posts", json={"client_id": "draft-0100", "text": "0"}, headers=auth()).status_code == 200
+
+
+def test_daily_limit_counts_posts_in_flight(client, env):
+    gate, fake = env
+    gate.MAX_POSTS_PER_DAY = 2
+    assert client.post("/xyz/posts", json={"client_id": "draft-0200", "text": "a"}, headers=auth()).status_code == 200
+    # another request is sending a post right now
+    now = gate.time.time()
+    with gate._db() as db:
+        db.execute(
+            "INSERT INTO posts (client_id, state, media_ids, text_sha256, created_at, updated_at, dry_run)"
+            " VALUES ('draft-0201', 'posting', '[]', 'x', ?, ?, 0)",
+            (now, now),
+        )
+    r = client.post("/xyz/posts", json={"client_id": "draft-0202", "text": "c"}, headers=auth())
+    assert r.status_code == 429 and r.json()["error"] == "daily_limit"
+    assert len(fake.tweets()) == 1
+
+
+def test_daily_limit_applies_to_retries(client, env):
+    gate, fake = env
+    gate.MAX_POSTS_PER_DAY = 1
+    fake.tweet_status, fake.tweet_body = 402, {"title": "Payment Required"}
+    failed = {"client_id": "draft-0300", "text": "before top-up"}
+    assert client.post("/xyz/posts", json=failed, headers=auth()).status_code == 402
+    # a failed post does not count
+    fake.tweet_status, fake.tweet_body = 201, None
+    assert client.post("/xyz/posts", json={"client_id": "draft-0301", "text": "b"}, headers=auth()).status_code == 200
+    # but its retry would call X, so the limit applies
+    r = client.post("/xyz/posts", json=failed, headers=auth())
+    assert r.status_code == 429 and r.json()["error"] == "daily_limit"
+    assert len(fake.tweets()) == 2
+
+
+def test_retry_after_media_expired_returns_the_post(client, env):
+    gate, fake = env
+    media_id, _ = upload(client, b"img")
+    body = {"client_id": "draft-0400", "text": "hello", "media_ids": [media_id]}
+    first = client.post("/xyz/posts", json=body, headers=auth())
+    assert first.status_code == 200
+    with gate._db() as db:
+        db.execute("UPDATE media SET expires_at=0")
+    r = client.post("/xyz/posts", json=body, headers=auth())
+    assert r.status_code == 200 and r.json() == first.json()
+    assert len(fake.tweets()) == 1
+    # a new post with the expired media still fails
+    r = client.post("/xyz/posts", json={**body, "client_id": "draft-0401"}, headers=auth())
+    assert r.status_code == 410 and r.json()["error"] == "media_expired"
+
+
+def test_reused_client_id_with_other_content_is_refused(client, env):
+    _, fake = env
+    media_id, _ = upload(client, b"img")
+    other, _ = upload(client, b"other")
+    body = {"client_id": "draft-0500", "text": "hello", "media_ids": [media_id]}
+    assert client.post("/xyz/posts", json=body, headers=auth()).status_code == 200
+    for changed in ({**body, "text": "hello!"}, {**body, "media_ids": [other]}, {**body, "media_ids": []}):
+        r = client.post("/xyz/posts", json=changed, headers=auth())
+        assert r.status_code == 409 and r.json()["error"] == "client_id_reused", changed
+    assert len(fake.tweets()) == 1
+
+
+def test_daily_media_limit(client, env):
+    gate, fake = env
+    gate.MAX_MEDIA_PER_DAY = 2
+    upload(client, b"one")
+    upload(client, b"two")
+    r = client.post("/xyz/media", json={"media_type": "image/jpeg", "total_bytes": 3}, headers=auth())
+    assert r.status_code == 429 and r.json()["error"] == "daily_media_limit"
+    assert len([c for c in fake.calls if c[1] == "/media/upload/initialize"]) == 2
+    # the dry-run token has its own count
+    upload(client, b"dry", token=DRY_TOKEN)
