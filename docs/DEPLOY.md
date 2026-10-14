@@ -32,5 +32,6 @@ ssh root@162.55.60.42 systemctl restart x-studio   # index.html-only changes nee
 
 - systemd sets no `HOME` — the unit provides `Environment=HOME=/root` (server.js resolves its data dir from it). Without it: `ERR_INVALID_ARG_TYPE` at boot.
 - `NO_TUNNEL=1` — on the VPS the FastAPI is already localhost:8142.
+- server.js listens on 127.0.0.1 only (Caddy on the same host proxies to it). `HOST=0.0.0.0` opens a local run to the LAN; without `XVP_UI_PASSWORD` that UI has no login.
 - Jam button: pbcopy/Terminal is Mac-only; on the VPS deploy the browser-clipboard fallback handles it.
 - Local Mac gate stays off because `XVP_UI_PASSWORD` is unset there.

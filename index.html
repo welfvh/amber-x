@@ -1116,7 +1116,9 @@
       const r = await fetch(`${API}/status`);
       const d = await r.json();
       dot.className = d.ok ? 'vps-dot ok' : 'vps-dot err';
-      dot.title = d.ok ? `Connected: @${d.username}` : (d.error || 'Error');
+      // The VPS re-checks the X credentials at most every 10 min (each check
+      // is a paid X read); every poll still proves the VPS is reachable.
+      dot.title = d.ok ? `Connected: @${d.username}${d.checked_at ? ` · X checked ${xTime(d.checked_at)} ago` : ''}` : (d.error || 'Error');
     } catch {
       dot.className = 'vps-dot err';
       dot.title = 'VPS unreachable';
@@ -1484,6 +1486,9 @@
   async function handlePost() {
     const thread = collectThread();
     if (!thread.length) return;
+    // What the composer holds now. Loading another draft or typing while the
+    // post is in flight changes it, and that input must survive the success.
+    const sent = { gen: composerGen, key: composerKey() };
 
     const btn = document.getElementById('postBtn');
     btn.disabled = true;
@@ -1510,15 +1515,33 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
 
-      clearComposer();
+      const cleared = settleComposerAfterPost(sent, payload.draft_id);
       loadDrafts();
-      toast(`Posted! \u2192 ${data.url}`);
+      toast(`Posted! \u2192 ${data.url}${cleared ? '' : ' \u2014 composer changed meanwhile, kept'}`);
     } catch (e) {
       toast('Error: ' + e.message, true);
     } finally {
       btn.textContent = 'Post';
       updateButtons();
     }
+  }
+
+  // After a successful post. `sent` is { gen, key } when the post came from the
+  // composer. Clears the composer only if it still holds exactly what was
+  // posted. Otherwise its text stays, and if it still points at the posted
+  // draft it is detached, so the next save makes a new draft.
+  function settleComposerAfterPost(sent, draftId) {
+    if (sent && sent.gen === composerGen && sent.key === composerKey()) { clearComposer(); return true; }
+    if (draftId && currentEditDraftId === draftId) detachComposer();
+    return false;
+  }
+
+  // Keeps the composer's text but points it at no draft (its draft was posted
+  // or deleted). Writes the autosave at once, so a reload keeps the text too.
+  function detachComposer() {
+    switchComposerDraft(null);
+    clearTimeout(_autosaveTimer);
+    writeAutosave();
   }
 
   // ── draft management ───────────────────────────────────
@@ -1651,16 +1674,26 @@
 
   async function deleteDraft(id) {
     try {
-      await fetch(`${API}/drafts/${id}`, { method: 'DELETE' });
-      if (currentEditDraftId === id) clearComposer();
+      const res = await fetch(`${API}/drafts/${id}`, { method: 'DELETE' });
+      if (!res.ok && res.status !== 404) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+      // The composer may hold this draft, maybe with unsaved edits: keep the
+      // text and detach it, so autosave keeps it and a save makes a new draft.
+      const kept = currentEditDraftId === id;
+      if (kept) detachComposer();
       loadDrafts();
-      toast('Draft deleted');
+      toast(kept ? 'Draft deleted — its text stays in the composer' : 'Draft deleted');
     } catch (e) {
       toast('Error: ' + e.message, true);
     }
   }
 
   async function postDraft(id) {
+    // Open in the composer: post what is on screen. handlePost saves the
+    // composer into the draft first, so unsaved edits are posted, not lost.
+    if (currentEditDraftId === id) {
+      if (!collectThread().length) { toast('The composer holding this draft is empty \u2014 nothing to post', true); return; }
+      return handlePost();
+    }
     try {
       const res = await fetch(`${API}/post`, {
         method: 'POST',
@@ -1670,7 +1703,7 @@
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       loadDrafts();
-      if (currentEditDraftId === id) clearComposer();
+      settleComposerAfterPost(null, id);  // opened meanwhile: keep its text, detach
       toast(`Posted! \u2192 ${data.url}`);
     } catch (e) {
       toast('Error: ' + e.message, true);
@@ -1731,26 +1764,30 @@
     if (!timeInput) { toast('Pick a time', true); return; }
 
     const scheduledAt = new Date(timeInput).toISOString();
-    let tweets;
-
-    if (scheduleDraftId) {
-      const res = await fetch(`${API}/drafts/${scheduleDraftId}`);
-      const draft = await res.json();
-      tweets = (draft.thread || []).map(({ text, in_reply_to_tweet_id, quote_tweet_id }) =>
-        ({ text, in_reply_to_tweet_id, quote_tweet_id }));
-    } else {
-      tweets = withCtx(collectThread().map(t => ({ text: t.text })));
-    }
+    const listDraftId = scheduleDraftId;
 
     try {
+      // Same input as /post: a draft id makes the server send the stored
+      // thread with its images; the composer's own images ride inline. A
+      // draft open in the composer is saved first, so the schedule carries
+      // what is on screen.
+      let payload;
+      if (listDraftId && listDraftId !== currentEditDraftId) {
+        payload = { draft_id: listDraftId };
+      } else {
+        const thread = collectThread();
+        if (!thread.length) throw new Error('Nothing to schedule');
+        payload = { tweets: withCtx(thread.map(t => ({
+          text: t.text,
+          media: t.media.filter(m => m.data).map(({ data, mimeType, name }) => ({ data, mimeType, name })),
+        }))) };
+        if (currentEditDraftId) payload.draft_id = await saveComposerDraft();
+      }
+      payload.scheduled_at = scheduledAt;
       const res = await fetch(`${API}/schedule`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tweets,
-          scheduled_at: scheduledAt,
-          draft_id: scheduleDraftId || currentEditDraftId,
-        }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || data.detail);
@@ -1769,18 +1806,21 @@
   let statsLoaded = false;
 
   async function loadFeed() {
-    if (!statsLoaded) {
-      try {
-        const res = await fetch(`${API}/stats`);
-        const data = await res.json();
-        document.getElementById('statFollowers').textContent = fmtNum(data.followers);
-        document.getElementById('statTweets').textContent = fmtNum(data.tweet_count);
-        document.getElementById('statLikes').textContent = fmtNum(data.recent_metrics?.total_likes || 0);
-        document.getElementById('statImpressions').textContent = fmtNum(data.recent_metrics?.total_impressions || 0);
-        statsLoaded = true;
-      } catch {}
-    }
+    if (!statsLoaded) await loadStats();
     renderCurrentFeed();
+  }
+
+  // Stats bar. The server caches /stats for 15 min (a live fetch costs 2 X reads).
+  async function loadStats(refresh = false) {
+    try {
+      const res = await fetch(`${API}/stats${refresh ? '?refresh=1' : ''}`);
+      const data = await res.json();
+      document.getElementById('statFollowers').textContent = fmtNum(data.followers);
+      document.getElementById('statTweets').textContent = fmtNum(data.tweet_count);
+      document.getElementById('statLikes').textContent = fmtNum(data.recent_metrics?.total_likes || 0);
+      document.getElementById('statImpressions').textContent = fmtNum(data.recent_metrics?.total_impressions || 0);
+      statsLoaded = true;
+    } catch {}
   }
 
   function switchFeed(name) {
@@ -1791,7 +1831,11 @@
     renderCurrentFeed();
   }
 
-  function refreshCurrentFeed() { renderCurrentFeed(true); }
+  function refreshCurrentFeed() {
+    // ↻ on the own-tweet feeds also reads the stats bar live: same account data.
+    if (currentFeed === 'top' || currentFeed === 'recent') loadStats(true);
+    renderCurrentFeed(true);
+  }
 
   function cacheNote(data) {
     const el = document.getElementById('feedCacheNote');
@@ -2159,6 +2203,7 @@
       el.innerHTML = data.items.map(item => {
         const tweets = JSON.parse(item.tweets_json || '[]');
         const preview = tweets[0]?.text || '(empty)';
+        const images = tweets.reduce((n, t) => n + (t.media_paths?.length || 0), 0);
         const countdown = item.status === 'pending' ? getCountdown(item.scheduled_at) : '';
 
         return `
@@ -2167,6 +2212,7 @@
             ${countdown ? `<span class="queue-countdown">${countdown}</span>` : ''}
             <div class="queue-time">Scheduled: ${fmtDate(item.scheduled_at)}</div>
             <div class="draft-body">${esc(preview.slice(0, 200))}</div>
+            ${images ? `<div class="draft-meta">${images} image${images > 1 ? 's' : ''}</div>` : ''}
             ${item.tweet_url ? `<div class="draft-meta"><a href="${item.tweet_url}" target="_blank">${item.tweet_url}</a></div>` : ''}
             ${item.error ? `<div class="draft-meta" style="color:var(--danger)">Error: ${esc(item.error)}</div>` : ''}
             ${item.status === 'pending' ? `<div class="draft-actions"><button class="btn btn-danger" onclick="cancelScheduled('${item.id}')">Cancel</button></div>` : ''}
