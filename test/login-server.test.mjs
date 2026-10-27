@@ -54,7 +54,10 @@ test('real server rejects bad input, persists a session, and limits a parallel b
     }
   } finally {
     clearTimeout(startupTimer);
-    server.kill('SIGTERM');
-    await once(server, 'exit');
+    if (server.exitCode === null && server.signalCode === null && server.pid !== undefined) {
+      const exited = once(server, 'exit');
+      server.kill('SIGTERM');
+      await exited;
+    }
   }
 });
