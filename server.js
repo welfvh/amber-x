@@ -17,6 +17,7 @@ import { fileURLToPath } from 'url';
 import { execSync, spawn } from 'child_process';
 import { randomUUID, timingSafeEqual } from 'crypto';
 import Database from 'better-sqlite3';
+import { LoginLimiter, readLoginPassword } from './login.js';
 
 const PORT = parseInt(process.env.PORT || '3131', 10);
 const __dir = dirname(fileURLToPath(import.meta.url));
@@ -41,8 +42,7 @@ if (!VPS_AUTH_TOKEN) {
 // ── UI auth gate (public deploys only) ──────────────────────
 // Active when XVP_UI_PASSWORD is set (x.welf.ai). Local Mac runs skip it.
 const UI_PASSWORD = process.env.XVP_UI_PASSWORD || '';
-const authFails = new Map(); // ip → { count, resetAt }
-const AUTH_MAX_FAILS = 10, AUTH_WINDOW_MS = 15 * 60 * 1000;
+const loginLimiter = new LoginLimiter();
 
 // ── ensure directories ──────────────────────────────────────
 
@@ -364,8 +364,13 @@ button{width:100%;padding:.75rem;font-size:1rem;font-weight:700;color:#fff;backg
 <script>
 document.getElementById('f').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const r = await fetch('/login', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:document.getElementById('pw').value})});
-  if (r.ok) location.href = '/'; else document.getElementById('err').style.display = 'block';
+  const err = document.getElementById('err');
+  try {
+    const r = await fetch('/login', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password:document.getElementById('pw').value})});
+    if (r.ok) { location.href = '/'; return; }
+    err.textContent = r.status === 429 ? 'Too many attempts. Try again in ' + (r.headers.get('Retry-After') || '60') + ' seconds.' : r.status === 401 ? 'Wrong password' : 'Sign-in failed. Check your password and try again.';
+  } catch { err.textContent = 'Connection failed. Your password is still in the field. Try again.'; }
+  err.style.display = 'block';
 });
 </script></body></html>`;
 
@@ -386,21 +391,26 @@ const server = http.createServer(async (req, res) => {
       }
       if (path === '/login' && req.method === 'POST') {
         const ip = clientIp(req);
-        const fails = authFails.get(ip);
-        if (fails && fails.count >= AUTH_MAX_FAILS && Date.now() < fails.resetAt) {
+        res.setHeader('Cache-Control', 'no-store');
+        const retryAfter = loginLimiter.reserve(ip);
+        if (retryAfter) {
+          res.setHeader('Retry-After', String(retryAfter));
+          res.setHeader('Connection', 'close');
           return send(res, 429, { error: 'too_many_attempts' });
         }
-        const body = await readBody(req);
+        let password;
+        try { password = await readLoginPassword(req); }
+        catch {
+          res.setHeader('Connection', 'close');
+          return send(res, 400, { error: 'invalid_request' });
+        }
         await new Promise(r => setTimeout(r, 250)); // slow brute force
-        if (!passwordMatches(body.password)) {
-          const f = authFails.get(ip) || { count: 0, resetAt: Date.now() + AUTH_WINDOW_MS };
-          f.count += 1; if (Date.now() > f.resetAt) { f.count = 1; f.resetAt = Date.now() + AUTH_WINDOW_MS; }
-          authFails.set(ip, f);
+        if (!passwordMatches(password)) {
           return send(res, 401, { error: 'invalid_credentials' });
         }
-        authFails.delete(ip);
         const token = randomUUID().replace(/-/g, '') + randomUUID().replace(/-/g, '');
         sessStmts.put.run(token);
+        loginLimiter.reset(ip);
         cors(res);
         res.writeHead(200, {
           'Content-Type': 'application/json',
