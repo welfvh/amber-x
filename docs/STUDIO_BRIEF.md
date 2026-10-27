@@ -65,7 +65,7 @@ This doc is the source-of-truth spec for expanding the existing `amber-x` (x-vib
 - `server.js` (:3131) — draft CRUD, media, posting (dedup + status locks), scheduling, queue, tweet delete; feed/stats **proxy endpoints** (`/tweets`, `/activity`, `/stats`, `/status`) to the VPS; assets; jam→`/cc-x-jam` bridge.
 - `index.html` — Twitter-styled UI, tabs: Compose / Feed / Schedule / Assets; theme, char-ring, threads, image attach.
 - `vps/main.py` (Hetzner `162.55.60.42:8142`) — FastAPI + tweepy; posts/schedules/feeds/stats. **WIP (uncommitted): OAuth 2.0 PKCE for bookmarks.**
-- `mcp-server/` — MCP facade (Poke).
+- The separate MCP facade was retired on 27 October 2026.
 - SQLite: `drafts`, `media`, `assets`, `tweets_cache`.
 - Content strategy in sibling `~/dev/x-business/`: `CONTENT_PRINCIPLES.md`, `DONT_DO.md`, `PHRASE_BANK.md`, 1,253 categorized bookmarks.
 
