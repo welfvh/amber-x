@@ -27,12 +27,15 @@ test('real server rejects bad input, persists a session, and limits a parallel b
   });
   let diagnostics = '';
   server.stderr.on('data', chunk => { diagnostics += chunk.toString(); });
+  let startupTimer;
   try {
     await Promise.race([
       new Promise(resolve => server.stdout.on('data', chunk => { if (chunk.toString().includes('http://localhost:13931')) resolve(); })),
       once(server, 'exit').then(() => { throw new Error('Server failed: ' + diagnostics); }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Server startup timed out')), 5000)),
+      new Promise((_, reject) => { startupTimer = setTimeout(() => reject(new Error('Server startup timed out')), 5000); }),
     ]);
+    clearTimeout(startupTimer);
+    assert.equal((await fetch('http://127.0.0.1:13931/drafts')).status, 401);
     assert.equal((await login('{')).status, 400);
     assert.equal((await login('password=oops', 'application/x-www-form-urlencoded')).status, 400);
     const success = await login('{"password":"synthetic-password"}');
@@ -40,7 +43,7 @@ test('real server rejects bad input, persists a session, and limits a parallel b
     assert.match(success.headers['set-cookie'][0], /HttpOnly; Secure; SameSite=Lax/);
     assert.equal(success.headers['cache-control'], 'no-store');
     const cookie = success.headers['set-cookie'][0].split(';')[0];
-    const privateRead = await fetch('http://127.0.0.1:13931/api/drafts', { headers: { Cookie: cookie } });
+    const privateRead = await fetch('http://127.0.0.1:13931/drafts', { headers: { Cookie: cookie } });
     assert.equal(privateRead.status, 200);
     const burst = await Promise.all(Array.from({ length: 10 }, () => login('{"password":"wrong"}')));
     assert.equal(burst.filter(result => result.status === 401).length, 5);
@@ -50,6 +53,7 @@ test('real server rejects bad input, persists a session, and limits a parallel b
       assert.equal(result.body, '{"error":"too_many_attempts"}');
     }
   } finally {
+    clearTimeout(startupTimer);
     server.kill('SIGTERM');
     await once(server, 'exit');
   }
